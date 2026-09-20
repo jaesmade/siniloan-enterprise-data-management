@@ -1,0 +1,2 @@
+-- Local-only seed data belongs here. Keep real personal data out of this file.
+-- Accounts should be created through Supabase Auth so core.profiles is populated by the signup trigger.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Archive, ArrowLeft, ArrowRight, Bell,
   Check, CheckCircle, Clock, Database, DownloadSimple, Eye,
@@ -14,6 +14,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 
 type Screen = "login" | "register" | "pending" | "admin" | "databases" | "database" | "access" | "approvals" | "activity" | "import";
 type Role = "DPO" | "Data Steward" | "Staff";
@@ -107,43 +108,38 @@ function AuthShell({ children, step }: { children: React.ReactNode; step?: strin
   );
 }
 
-function Login({ navigate }: { navigate: (s: Screen) => void }) {
-  const [visible, setVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const submit = (e: React.FormEvent) => { e.preventDefault(); setLoading(true); setTimeout(() => navigate("admin"), 650); };
-  return <AuthShell><div className="auth-card">
-    <div className="eyebrow">Welcome back</div><h2>Sign in to your account</h2><p className="supporting">Enter your credentials to continue to the data portal.</p>
-    <form onSubmit={submit} className="form-stack">
-      <label>Email or username<input autoComplete="username" defaultValue="dpo@siniloan.gov.ph" placeholder="you@siniloan.gov.ph" /></label>
-      <label>Password<div className="password-field"><input type={visible ? "text" : "password"} defaultValue="municipal-demo" autoComplete="current-password" /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Hide password" : "Show password"}>{visible ? <EyeSlash /> : <Eye />}</button></div></label>
-      <div className="form-between"><label className="check-label"><input type="checkbox" /> Keep me signed in</label><button type="button" className="link-button">Forgot password?</button></div>
-      <button className="button primary full" type="submit" disabled={loading}>{loading ? <><SpinnerGap className="spin" /> Signing in…</> : <>Sign in <ArrowRight /></>}</button>
-    </form>
-    <div className="auth-switch">Need an account? <button className="link-button" onClick={() => navigate("register")}>Request access</button></div>
-    <div className="demo-note"><ShieldCheck /><span><strong>Prototype access</strong> Any credentials open the DPO dashboard.</span></div>
-  </div></AuthShell>;
+type AuthProfile = { id: string; full_name: string; username: string; email: string; role: "dpo" | "data_steward" | "staff"; status: "pending" | "active" | "rejected" | "suspended" };
+type Department = { id: string; name: string };
+
+function roleLabel(role: AuthProfile["role"]): Role {
+  return role === "dpo" ? "DPO" : role === "data_steward" ? "Data Steward" : "Staff";
+}
+
+function Login({ navigate, onAuthenticated }: { navigate: (s: Screen) => void; onAuthenticated: (profile: AuthProfile) => void }) {
+  const [visible, setVisible] = useState(false); const [loading, setLoading] = useState(false); const [error, setError] = useState("");
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setLoading(true); setError("");
+    const form = new FormData(event.currentTarget); const email = String(form.get("email") ?? "").trim(); const password = String(form.get("password") ?? "");
+    try {
+      const supabase = createSupabaseClient(); const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError || !data.user) { setError("We could not sign you in. Check your email and password."); return; }
+      const { data: profile, error: profileError } = await supabase.schema("core").from("profiles").select("id, full_name, username, email, role, status").eq("id", data.user.id).single();
+      if (profileError || !profile) { setError("Your account profile is not ready. Please contact the Data Privacy Officer."); return; }
+      if (profile.status !== "active") { navigate("pending"); return; }
+      onAuthenticated(profile as AuthProfile);
+    } catch { setError("Supabase is not available. Confirm the local services and environment variables are running."); } finally { setLoading(false); }
+  };
+  return <AuthShell><div className="auth-card"><div className="eyebrow">Welcome back</div><h2>Sign in to your account</h2><p className="supporting">Use the email address and password registered with the municipal data portal.</p><form onSubmit={submit} className="form-stack"><label>Email address<input name="email" type="email" autoComplete="email" placeholder="you@siniloan.gov.ph" required /></label><label>Password<div className="password-field"><input name="password" type={visible ? "text" : "password"} autoComplete="current-password" required /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Hide password" : "Show password"}>{visible ? <EyeSlash /> : <Eye />}</button></div></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button primary full" type="submit" disabled={loading}>{loading ? <><SpinnerGap className="spin" /> Signing in…</> : <>Sign in <ArrowRight /></>}</button></form><div className="auth-switch">Need an account? <button className="link-button" onClick={() => navigate("register")}>Request access</button></div></div></AuthShell>;
 }
 
 function Register({ navigate }: { navigate: (s: Screen) => void }) {
-  const [step, setStep] = useState(1);
-  return <AuthShell step={`Account request · Step ${step} of 2`}><div className="auth-card wide">
-    <button className="back-link" onClick={() => step === 1 ? navigate("login") : setStep(1)}><ArrowLeft /> Back</button>
-    {step === 1 ? <>
-      <div className="eyebrow">Request access</div><h2>Tell us about yourself</h2><p className="supporting">Your details will be reviewed by the Data Privacy Officer.</p>
-      <div className="form-grid">
-        <label className="span-2">Full name<input placeholder="e.g. Maria Angela Reyes" /></label>
-        <label>Username<input placeholder="maria.reyes" /></label><label>Email address<input type="email" placeholder="name@siniloan.gov.ph" /></label>
-        <label className="span-2">Department<select defaultValue=""><option value="" disabled>Select your department</option><option>Municipal Planning and Development Office</option><option>Public Employment Service Office</option><option>Rural Health Unit</option><option>Municipal Information Office</option></select></label>
-      </div>
-      <button className="button primary full" onClick={() => setStep(2)}>Continue <ArrowRight /></button>
-    </> : <>
-      <div className="eyebrow">Secure your account</div><h2>Create a password</h2><p className="supporting">Use at least 12 characters. You can use a password manager.</p>
-      <div className="form-stack"><label>Password<input type="password" autoComplete="new-password" placeholder="Enter a strong password" /></label><label>Confirm password<input type="password" autoComplete="new-password" placeholder="Repeat your password" /></label></div>
-      <div className="password-rules"><span className="met"><Check /> 12+ characters</span><span><Check /> Upper and lowercase</span><span><Check /> Number or symbol</span></div>
-      <label className="consent"><input type="checkbox" /> <span>I confirm these details are correct and understand that access is subject to DPO approval.</span></label>
-      <button className="button primary full" onClick={() => navigate("pending")}>Submit request <ArrowRight /></button>
-    </>}
-  </div></AuthShell>;
+  const [step, setStep] = useState(1); const [departments, setDepartments] = useState<Department[]>([]); const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
+  const [values, setValues] = useState({ fullName: "", username: "", email: "", departmentId: "", password: "", confirmPassword: "", consent: false });
+  useEffect(() => { createSupabaseClient().schema("core").from("departments").select("id, name").eq("is_active", true).order("name").then(({ data }: { data: unknown }) => setDepartments((data ?? []) as Department[])); }, []);
+  const continueToPassword = () => { if (!values.fullName || !values.username || !values.email || !values.departmentId) { setError("Complete every required field before continuing."); return; } setError(""); setStep(2); };
+  const submit = async () => { if (values.password.length < 12) { setError("Use a password with at least 12 characters."); return; } if (values.password !== values.confirmPassword) { setError("Passwords do not match."); return; } if (!values.consent) { setError("Confirm that the submitted details are correct."); return; } setLoading(true); setError(""); try { const supabase = createSupabaseClient(); const { error: signUpError } = await supabase.auth.signUp({ email: values.email, password: values.password, options: { data: { full_name: values.fullName, username: values.username, department_id: values.departmentId } } }); if (signUpError) { setError(signUpError.message); return; } navigate("pending"); } catch { setError("Supabase is not available. Confirm the local services and environment variables are running."); } finally { setLoading(false); } };
+  const update = (field: keyof typeof values, value: string | boolean) => setValues((current) => ({ ...current, [field]: value }));
+  return <AuthShell step={`Account request · Step ${step} of 2`}><div className="auth-card wide"><button className="back-link" onClick={() => step === 1 ? navigate("login") : setStep(1)}><ArrowLeft /> Back</button>{step === 1 ? <><div className="eyebrow">Request access</div><h2>Tell us about yourself</h2><p className="supporting">Your details will be reviewed by the Data Privacy Officer.</p><div className="form-grid"><label className="span-2">Full name<input value={values.fullName} onChange={(event) => update("fullName", event.target.value)} autoComplete="name" required /></label><label>Username<input value={values.username} onChange={(event) => update("username", event.target.value)} autoComplete="username" required /></label><label>Email address<input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} autoComplete="email" required /></label><label className="span-2">Department<select value={values.departmentId} onChange={(event) => update("departmentId", event.target.value)} required><option value="" disabled>{departments.length ? "Select your department" : "Loading departments…"}</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="button primary full" onClick={continueToPassword}>Continue <ArrowRight /></button></> : <><div className="eyebrow">Secure your account</div><h2>Create a password</h2><p className="supporting">Use at least 12 characters. You can use a password manager.</p><div className="form-stack"><label>Password<input type="password" value={values.password} onChange={(event) => update("password", event.target.value)} autoComplete="new-password" required /></label><label>Confirm password<input type="password" value={values.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} autoComplete="new-password" required /></label></div><div className="password-rules"><span className={values.password.length >= 12 ? "met" : ""}><Check /> 12+ characters</span><span className={values.password === values.confirmPassword && values.password ? "met" : ""}><Check /> Passwords match</span></div><label className="consent"><input type="checkbox" checked={values.consent} onChange={(event) => update("consent", event.target.checked)} /> <span>I confirm these details are correct and understand that access is subject to DPO approval.</span></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button primary full" onClick={submit} disabled={loading}>{loading ? <><SpinnerGap className="spin" /> Submitting…</> : <>Submit request <ArrowRight /></>}</button></>}</div></AuthShell>;
 }
 
 function Pending({ navigate }: { navigate: (s: Screen) => void }) {
@@ -159,7 +155,7 @@ const navItems: { screen: Screen; label: string; icon: typeof House; roles?: Rol
   { screen: "import", label: "Imports", icon: FileArrowUp },
 ];
 
-function AppShell({ screen, setScreen, role, setRole, selectedDatabase, openDatabase, children }: { screen: Screen; setScreen: (s: Screen) => void; role: Role; setRole: (r: Role) => void; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; children: React.ReactNode }) {
+function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; children: React.ReactNode; onSignOut: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   return <div className="app-shell">
     <a href="#main-content" className="skip-link">Skip to main content</a>
@@ -171,7 +167,7 @@ function AppShell({ screen, setScreen, role, setRole, selectedDatabase, openData
         <div className="nav-label">Databases</div>
         {(Object.keys(databaseMeta) as DatabaseKey[]).map(key => <button key={key} className={screen === "database" && selectedDatabase === key ? "subtle-active database-active" : ""} onClick={() => { openDatabase(key); setMobileOpen(false); }}><span className="db-dot" style={{ background: databaseMeta[key].color }} /> <span>{databaseMeta[key].name}</span></button>)}
       </nav>
-      <div className="sidebar-footer"><div className="role-switch"><label>Preview role<select value={role} onChange={e => { setRole(e.target.value as Role); setScreen(e.target.value === "Staff" ? "databases" : "admin"); }}><option>DPO</option><option>Data Steward</option><option>Staff</option></select></label></div><div className="user-chip"><div className="avatar">AR</div><div><strong>Angela Reyes</strong><span>{role}</span></div><button aria-label="Sign out" onClick={() => setScreen("login")}><SignOut /></button></div></div>
+      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><div className="user-chip"><div className="avatar">AR</div><div><strong>Signed-in account</strong><span>{role}</span></div><button aria-label="Sign out" onClick={onSignOut}><SignOut /></button></div></div>
     </aside>
     {mobileOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
     <div className="app-main"><header className="topbar"><button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button><div className="top-search"><MagnifyingGlass /><input aria-label="Search all databases" placeholder="Search records, people, or requests…" /><kbd>⌘ K</kbd></div><div className="top-actions"><button aria-label="Notifications" className="icon-button"><Bell /><span className="notify-dot" /></button><button className="help-button">Help & support</button></div></header><main id="main-content">{children}</main></div>
@@ -182,6 +178,8 @@ function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string
   return <div className="page-header"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1><p>{description}</p></div>{actions && <div className="header-actions">{actions}</div>}</div>;
 }
 
+// Retained while the live Supabase views progressively replace preview-only views.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function AdminDashboard({ setScreen, role, openDatabase }: { setScreen: (s: Screen) => void; role: Role; openDatabase: (key: DatabaseKey) => void }) {
   return <div className="page"><PageHeader eyebrow="Sunday, September 20" title={`Good morning, Angela`} description="Here’s what is happening across the municipal data system." actions={<><button className="button secondary"><DownloadSimple /> Export overview</button>{role === "DPO" && <button className="button primary" onClick={() => setScreen("approvals")}><UserPlus /> Review 3 accounts</button>}</>} />
     <section className="alert-strip"><div><ShieldCheck weight="fill" /><span><strong>System health is good.</strong> All databases are available and the latest backup completed at 2:00 AM.</span></div><button>View system status <ArrowRight /></button></section>
@@ -208,6 +206,7 @@ function Databases({ openDatabase }: { openDatabase: (key: DatabaseKey) => void 
   </div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DatabaseDashboard({ setScreen }: { setScreen: (s: Screen) => void }) {
   const [tab, setTab] = useState("Overview");
   const [query, setQuery] = useState("");
@@ -221,6 +220,7 @@ function DatabaseDashboard({ setScreen }: { setScreen: (s: Screen) => void }) {
   </div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ResearchDashboard({ setScreen }: { setScreen: (s: Screen) => void }) {
   const [tab, setTab] = useState("Overview");
   const [query, setQuery] = useState("");
@@ -259,6 +259,7 @@ function ResearchDashboard({ setScreen }: { setScreen: (s: Screen) => void }) {
   </div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function BiometricsDashboard({ setScreen }: { setScreen: (s: Screen) => void }) {
   const [tab, setTab] = useState("Overview");
   const [query, setQuery] = useState("");
@@ -339,23 +340,56 @@ function ImportFlow() {
   return <div className="page narrow-page"><PageHeader eyebrow="Data operations" title="Import records" description="Upload, validate, and review data before committing it to a database." /><div className="stepper">{["Upload","Map fields","Validate","Review & import"].map((x,i)=><div className={step>i+1?"done":step===i+1?"active":""} key={x}><span>{step>i+1?<Check />:i+1}</span><strong>{x}</strong></div>)}</div><section className="panel import-card">{step===1&&<><h2>Choose destination and file</h2><p>Select the database first so we can apply the correct validation rules.</p><label>Destination database<select><option>Jobseeker Registry</option><option>Research & Data Requests</option><option>Biometrics Data</option></select></label><button className="dropzone" onClick={()=>setStep(2)}><FileArrowUp weight="duotone"/><strong>Drop an Excel or CSV file here</strong><span>or click to browse · Maximum 25 MB</span><em>.XLSX, .XLS, .CSV</em></button></>}{step===2&&<><div className="import-file"><FileArrowUp/><div><strong>Jobseeker-NSRP Form 1 (Responses).xlsx</strong><span>1,592 rows · 144 columns · 2.4 MB</span></div><Badge tone="green"><Check/> Uploaded</Badge></div><h2>Map source columns</h2><p>We matched 138 of 144 columns automatically.</p><div className="mapping-list"><div><span>SURNAME</span><ArrowRight/><strong>Personal details · Surname</strong><Badge tone="green">Matched</Badge></div><div><span>DATE OF BIRTH</span><ArrowRight/><strong>Personal details · Birth date</strong><Badge tone="green">Matched</Badge></div><div className="warning"><span>PREFERRED CCUPATION/S</span><ArrowRight/><select><option>Select destination field</option><option>Preferences · Occupation</option></select><Badge tone="amber">Review</Badge></div></div></>}{step===3&&<><div className="validation-progress"><CheckCircle weight="fill"/><h2>Validation complete</h2><p>1,572 rows are ready to import. Review 20 rows with warnings.</p></div><div className="validation-stats"><div><strong>1,572</strong><span>Ready</span></div><div><strong>18</strong><span>Warnings</span></div><div><strong>2</strong><span>Blocked</span></div></div><div className="issue-list"><div><WarningCircle/><span><strong>18 rows have missing contact details</strong><small>These rows can still be imported.</small></span><button>Review rows</button></div><div><XCircle/><span><strong>2 possible duplicate records</strong><small>Resolve these before importing.</small></span><button>Compare</button></div></div></>}{step===4&&<><div className="validation-progress"><ShieldCheck weight="fill"/><h2>Ready to import</h2><p>Confirm the summary below. The import will be recorded in system activity.</p></div><div className="import-summary"><div><span>Destination</span><strong>Jobseeker Registry</strong></div><div><span>Records to add</span><strong>1,572</strong></div><div><span>Rows skipped</span><strong>20</strong></div><div><span>Import file</span><strong>Jobseeker-NSRP Form 1 (Responses).xlsx</strong></div></div><label className="consent"><input type="checkbox"/><span>I reviewed the validation result and confirm this import.</span></label></>}<div className="import-actions"><button className="button secondary" onClick={()=>setStep(Math.max(1,step-1))} disabled={step===1}><ArrowLeft/> Back</button><button className="button primary" onClick={()=>setStep(Math.min(4,step+1))}>{step===4?<>Start import <FileArrowUp/></>:<>Continue <ArrowRight/></>}</button></div></section></div>;
 }
 
+type LiveRecord = { id: string; [key: string]: string | number | null | undefined };
+
+const liveModuleConfig: Record<DatabaseKey, { title: string; description: string; schema: string; table: string; columns: Array<[string, string]> }> = {
+  jobseekers: { title: "Jobseeker Registry", description: "Live records available to your account.", schema: "jobseekers", table: "people", columns: [["name", "Name"], ["source_person_id", "Source ID"], ["email", "Email"], ["mobile_number", "Mobile number"], ["created_at", "Created"]] },
+  research: { title: "Research & Data Requests", description: "Live requests available to your account.", schema: "research", table: "requests", columns: [["control_number", "Control no."], ["requester_name", "Requester"], ["institution_office", "Institution / office"], ["research_title_purpose", "Research title / purpose"], ["status", "Status"], ["date_received", "Received"]] },
+  biometrics: { title: "Biometrics Data", description: "Live attendance metadata available to your account.", schema: "biometrics", table: "device_events", columns: [["person_name", "Name"], ["personnel_number", "No."], ["occurred_at", "Date / time"], ["attendance_status", "Status"], ["external_location_id", "Location ID"], ["verify_code", "Verify code"]] },
+};
+
+function displayValue(value: LiveRecord[string]) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "string" && (value.endsWith("Z") || /^\d{4}-\d{2}-\d{2}/.test(value))) {
+    const date = new Date(value); if (!Number.isNaN(date.valueOf())) return date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: value.includes("T") ? "short" : undefined });
+  }
+  return String(value).replaceAll("_", " ");
+}
+
+function LiveModuleDashboard({ database }: { database: DatabaseKey }) {
+  const config = liveModuleConfig[database]; const [records, setRecords] = useState<LiveRecord[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [query, setQuery] = useState("");
+  useEffect(() => { let active = true; createSupabaseClient().schema(config.schema).from(config.table).select("*").order("created_at", { ascending: false }).limit(100).then(({ data, error: loadError }: { data: unknown; error: { message: string } | null }) => { if (!active) return; if (loadError) setError(loadError.message); else setRecords((data ?? []) as LiveRecord[]); setLoading(false); }); return () => { active = false; }; }, [config.schema, config.table]);
+  const filtered = records.filter((record) => Object.values(record).join(" ").toLowerCase().includes(query.toLowerCase()));
+  return <div className="page"><div className="breadcrumb"><button>My databases</button><span>/</span><span>{config.title}</span></div><PageHeader title={config.title} description={config.description} actions={<Badge tone="green"><CheckCircle /> Live Supabase data</Badge>} /><div className="compact-metrics"><div><span>Visible records</span><strong>{loading ? "…" : records.length}</strong><small>Up to 100 newest records</small></div><div><span>Access</span><strong>RLS</strong><small>Filtered by your dataset grant</small></div><div><span>Source</span><strong>Supabase</strong><small>{config.schema}.{config.table}</small></div><div><span>Refresh</span><strong>Live</strong><small>Reload the page for the latest data</small></div></div><section className="panel table-panel"><div className="table-toolbar"><div className="table-search"><MagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search visible records" aria-label={`Search ${config.title}`} /></div></div>{loading ? <div className="empty-state"><SpinnerGap className="spin" /><h2>Loading records</h2><p>Checking your dataset access and loading current records.</p></div> : error ? <div className="empty-state"><WarningCircle /><h2>Records are unavailable</h2><p>{error}</p></div> : filtered.length === 0 ? <div className="empty-state"><Archive /><h2>No records yet</h2><p>This dataset has no records visible to your account. Import a source file after a DPO grants read/write access.</p></div> : <><div className="table-scroll"><table><thead><tr>{config.columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{filtered.map((record) => <tr key={record.id}>{config.columns.map(([key]) => <td key={key}>{displayValue(record[key])}</td>)}</tr>)}</tbody></table></div><div className="pagination"><span>Showing {filtered.length} of {records.length} records</span></div></>}</section></div>;
+}
+
+function LiveAdminDashboard({ profile, openDatabase }: { profile: AuthProfile; openDatabase: (database: DatabaseKey) => void }) {
+  const [counts, setCounts] = useState<Record<DatabaseKey, number>>({ jobseekers: 0, research: 0, biometrics: 0 }); const [error, setError] = useState("");
+  useEffect(() => { let active = true; Promise.all([createSupabaseClient().schema("jobseekers").from("people").select("id", { count: "exact", head: true }), createSupabaseClient().schema("research").from("requests").select("id", { count: "exact", head: true }), createSupabaseClient().schema("biometrics").from("device_events").select("id", { count: "exact", head: true })]).then((results) => { if (!active) return; if (results.some((result) => result.error)) setError("Some dataset totals are unavailable for this account."); setCounts({ jobseekers: results[0].count ?? 0, research: results[1].count ?? 0, biometrics: results[2].count ?? 0 }); }); return () => { active = false; }; }, []);
+  return <div className="page"><PageHeader eyebrow="Live data" title={`Welcome, ${profile.full_name}`} description="Counts below are read directly from Supabase and limited by your permissions." /><section className="alert-strip"><div><ShieldCheck weight="fill" /><span><strong>Connected to Supabase.</strong> Your role and module access are read from your approved profile.</span></div></section>{error && <p className="form-error" role="alert">{error}</p>}<div className="metric-grid">{(Object.keys(databaseMeta) as DatabaseKey[]).map((database, index) => { const db = databaseMeta[database]; const Icon = [IdentificationCard, Archive, Fingerprint][index]; return <button key={database} className="metric-card" onClick={() => openDatabase(database)}><div className="metric-top"><span className="metric-icon" style={{ background: `${db.color}14`, color: db.color }}><Icon /></span><Badge tone="green">Live</Badge></div><span>{db.name}</span><strong>{counts[database]}</strong><small>Visible records in Supabase</small><div className="metric-link">Open database <ArrowRight /></div></button>; })}</div></div>;
+}
+
 export function EnterpriseDataApp() {
-  const [screen, setScreen] = useState<Screen>("login"); const [role, setRole] = useState<Role>("DPO");
+  const [screen, setScreen] = useState<Screen>("login"); const [role, setRole] = useState<Role>("Staff"); const [profile, setProfile] = useState<AuthProfile | null>(null); const [booting, setBooting] = useState(true);
   const [selectedDatabase, setSelectedDatabase] = useState<DatabaseKey>("jobseekers");
   const openDatabase = (key: DatabaseKey) => { setSelectedDatabase(key); setScreen("database"); };
-  if (screen === "login") return <Login navigate={setScreen} />;
+  const activateProfile = (nextProfile: AuthProfile) => { setProfile(nextProfile); setRole(roleLabel(nextProfile.role)); setScreen(nextProfile.status === "active" ? "admin" : "pending"); };
+  useEffect(() => { let active = true; createSupabaseClient().auth.getSession().then(async ({ data }: { data: { session: { user: { id: string } } | null } }) => { if (!data.session) return; const { data: nextProfile } = await createSupabaseClient().schema("core").from("profiles").select("id, full_name, username, email, role, status").eq("id", data.session.user.id).maybeSingle(); if (active && nextProfile) activateProfile(nextProfile as AuthProfile); }).catch(() => undefined).finally(() => { if (active) setBooting(false); }); return () => { active = false; }; }, []);
+  const signOut = async () => { await createSupabaseClient().auth.signOut(); setProfile(null); setRole("Staff"); setScreen("login"); };
+  if (booting) return <AuthShell><div className="status-card"><SpinnerGap className="spin" /><h2>Checking your secure session</h2><p>Loading your approved account and permissions.</p></div></AuthShell>;
+  if (screen === "login") return <Login navigate={setScreen} onAuthenticated={activateProfile} />;
   if (screen === "register") return <Register navigate={setScreen} />;
   if (screen === "pending") return <Pending navigate={setScreen} />;
   let content: React.ReactNode;
   switch(screen) {
-    case "admin": content=<AdminDashboard setScreen={setScreen} role={role} openDatabase={openDatabase}/>; break;
+    case "admin": content=profile ? <LiveAdminDashboard profile={profile} openDatabase={openDatabase}/> : <LiveAdminDashboard profile={{ id: "", full_name: "Municipal user", username: "", email: "", role: "staff", status: "active" }} openDatabase={openDatabase}/>; break;
     case "databases": content=<Databases openDatabase={openDatabase}/>; break;
-    case "database": content=selectedDatabase === "biometrics" ? <BiometricsDashboard setScreen={setScreen}/> : selectedDatabase === "research" ? <ResearchDashboard setScreen={setScreen}/> : <DatabaseDashboard setScreen={setScreen}/>; break;
+    case "database": content=<LiveModuleDashboard key={selectedDatabase} database={selectedDatabase}/>; break;
     case "access": content=<AccessManagement/>; break;
     case "approvals": content=<Approvals/>; break;
     case "activity": content=<SystemActivity/>; break;
     case "import": content=<ImportFlow/>; break;
-    default: content=<AdminDashboard setScreen={setScreen} role={role} openDatabase={openDatabase}/>;
+    default: content=profile ? <LiveAdminDashboard profile={profile} openDatabase={openDatabase}/> : null;
   }
-  return <AppShell screen={screen} setScreen={setScreen} role={role} setRole={setRole} selectedDatabase={selectedDatabase} openDatabase={openDatabase}>{content}</AppShell>;
+  return <AppShell screen={screen} setScreen={setScreen} role={role} selectedDatabase={selectedDatabase} openDatabase={openDatabase} onSignOut={signOut}>{content}</AppShell>;
 }
