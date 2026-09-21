@@ -22,6 +22,7 @@ type Screen = "login" | "register" | "pending" | "admin" | "databases" | "databa
 type Role = "DPO" | "Data Steward" | "Staff";
 type DatabaseKey = "jobseekers" | "research" | "biometrics";
 type AccessLevel = "none" | "read" | "write";
+type HeaderNotification = { id: string; action: string; summary: string; occurred_at: string; outcome: string };
 
 const databaseMeta: Record<DatabaseKey, { name: string; short: string; count: string; change: string; updated: string; color: string }> = {
   jobseekers: { name: "Jobseeker Registry", short: "JS", count: "1,592", change: "+4.8%", updated: "8 min ago", color: "#1e5aa8" },
@@ -117,6 +118,10 @@ function roleLabel(role: AuthProfile["role"]): Role {
   return role === "dpo" ? "DPO" : role === "data_steward" ? "Data Steward" : "Staff";
 }
 
+function accountInitials(name: string) {
+  return name.split(" ").filter(Boolean).map((part)=>part[0]).slice(0,2).join("").toUpperCase();
+}
+
 function Login({ navigate, onAuthenticated }: { navigate: (s: Screen) => void; onAuthenticated: (profile: AuthProfile) => void }) {
   const [visible, setVisible] = useState(false); const [loading, setLoading] = useState(false); const [error, setError] = useState("");
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -160,17 +165,29 @@ const navItems: { screen: Screen; label: string; icon: typeof House; roles?: Rol
   { screen: "import", label: "Imports", icon: FileArrowUp },
 ];
 
-function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => Promise<void> }) {
+function AppShell({ screen, setScreen, profile, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; profile: AuthProfile; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => Promise<void> }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState<HeaderNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationError, setNotificationError] = useState("");
+  const [lastReadAt, setLastReadAt] = useState(()=>typeof window==="undefined"?"":window.localStorage.getItem(`notifications-read-${profile.id}`)??"");
+  const unreadCount=notifications.filter(item=>!lastReadAt||new Date(item.occurred_at)>new Date(lastReadAt)).length+(role==="DPO"?pendingApprovalCount:0);
+  const markAllRead=()=>{const readAt=new Date().toISOString();setLastReadAt(readAt);window.localStorage.setItem(`notifications-read-${profile.id}`,readAt);};
+  useEffect(()=>{
+    let active=true;
+    const load=async()=>{const {data,error}=await createSupabaseClient().schema("core").from("audit_events").select("id, action, summary, occurred_at, outcome").order("occurred_at",{ascending:false}).limit(8);if(!active)return;if(error){setNotificationError("Notifications could not be loaded.");}else{setNotifications((data??[]) as HeaderNotification[]);setNotificationError("");}setNotificationsLoading(false);};
+    load();const timer=window.setInterval(load,30_000);return()=>{active=false;window.clearInterval(timer);};
+  },[]);
   useEffect(() => {
-    if (!confirmSignOut) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !signingOut) setConfirmSignOut(false); };
+    if (!confirmSignOut&&!notificationOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") {if(!signingOut)setConfirmSignOut(false);setNotificationOpen(false);} };
     document.addEventListener("keydown", closeOnEscape);
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", closeOnEscape); document.body.style.overflow = ""; };
-  }, [confirmSignOut, signingOut]);
+    if(confirmSignOut)document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", closeOnEscape); if(confirmSignOut)document.body.style.overflow = ""; };
+  }, [confirmSignOut, notificationOpen, signingOut]);
   const completeSignOut = async () => { setSigningOut(true); try { await onSignOut(); } finally { setSigningOut(false); setConfirmSignOut(false); } };
   return <div className="app-shell">
     <a href="#main-content" className="skip-link">Skip to main content</a>
@@ -182,10 +199,11 @@ function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, pen
         <div className="nav-label">Databases</div>
         {(Object.keys(databaseMeta) as DatabaseKey[]).map(key => <button key={key} className={screen === "database" && selectedDatabase === key ? "subtle-active database-active" : ""} onClick={() => { openDatabase(key); setMobileOpen(false); }}><span className="db-dot" style={{ background: databaseMeta[key].color }} /> <span>{databaseMeta[key].name}</span></button>)}
       </nav>
-      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><div className="user-chip"><div className="avatar">AR</div><div><strong>Signed-in account</strong><span>{role}</span></div><button aria-label="Sign out" onClick={()=>setConfirmSignOut(true)}><SignOut /></button></div></div>
+      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><button className="sidebar-notification" aria-expanded={notificationOpen} aria-controls="notification-panel" onClick={()=>setNotificationOpen(current=>!current)}><span className="notification-icon"><Bell/>{unreadCount>0&&<em>{Math.min(unreadCount,99)}</em>}</span><span><strong>Notifications</strong><small>{unreadCount?`${unreadCount} unread`:"You’re all caught up"}</small></span></button></div>
     </aside>
     {mobileOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
-    <div className="app-main"><header className="topbar"><button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button><div className="top-actions"><button aria-label="Notifications" className="icon-button"><Bell /><span className="notify-dot" /></button><button className="help-button">Help & support</button></div></header><main id="main-content">{children}</main></div>
+    <div className="app-main"><header className="topbar"><button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button><div className="top-actions"><div className="top-account"><span className="avatar">{accountInitials(profile.full_name)}</span><span><strong>{profile.full_name}</strong><small>{role}</small></span></div><button aria-label="Sign out" title="Sign out" className="icon-button" onClick={()=>setConfirmSignOut(true)}><SignOut/></button></div></header><main id="main-content">{children}</main></div>
+    {notificationOpen&&<><button className="notification-backdrop" aria-label="Close notifications" onClick={()=>setNotificationOpen(false)}/><aside className="notification-panel" id="notification-panel" aria-label="Notifications"><header><div><h2>Notifications</h2><p>Recent activity requiring your attention</p></div>{unreadCount>0&&<button onClick={markAllRead}>Mark all read</button>}</header><div className="notification-list">{role==="DPO"&&pendingApprovalCount>0&&<button className="notification-item unread" onClick={()=>{markAllRead();setNotificationOpen(false);setScreen("approvals")}}><span className="activity-icon amber"><UserPlus/></span><span><strong>{pendingApprovalCount} account {pendingApprovalCount===1?"request":"requests"} waiting</strong><small>Review and assign database access</small></span></button>}{notificationsLoading?<div className="notification-empty"><SpinnerGap className="spin"/><span>Loading notifications…</span></div>:notificationError?<div className="notification-empty"><WarningCircle/><span>{notificationError}</span></div>:notifications.length===0&&pendingApprovalCount===0?<div className="notification-empty"><CheckCircle/><span>No new notifications.</span></div>:notifications.map(item=>{const unread=!lastReadAt||new Date(item.occurred_at)>new Date(lastReadAt);return <button className={`notification-item ${unread?"unread":""}`} key={item.id} onClick={()=>{markAllRead();setNotificationOpen(false);if(role!=="Staff")setScreen("activity")}}><span className={`activity-icon ${item.outcome==="failure"?"red":"blue"}`}>{item.outcome==="failure"?<WarningCircle/>:<Pulse/>}</span><span><strong>{item.summary}</strong><small>{item.action.replaceAll("."," · ")} · {new Date(item.occurred_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})}</small></span></button>})}</div>{role!=="Staff"&&<footer><button onClick={()=>{markAllRead();setNotificationOpen(false);setScreen("activity")}}>View all system activity <ArrowRight/></button></footer>}</aside></>}
     {confirmSignOut&&<div className="modal-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget&&!signingOut)setConfirmSignOut(false)}}><section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-description"><div className="confirmation-icon"><SignOut weight="duotone"/></div><h2 id="signout-title">Sign out of the system?</h2><p id="signout-description">Your secure session will end. You will need to enter your username and password to access municipal data again.</p><div className="confirmation-actions"><button className="button secondary" autoFocus onClick={()=>setConfirmSignOut(false)} disabled={signingOut}>Cancel</button><button className="button danger-solid" onClick={completeSignOut} disabled={signingOut}>{signingOut?<><SpinnerGap className="spin"/> Signing out…</>:<><SignOut/> Sign out</>}</button></div></section></div>}
   </div>;
 }
@@ -556,5 +574,5 @@ export function EnterpriseDataApp() {
     case "import": content=<ImportFlow key={selectedDatabase} initialModule={selectedDatabase}/>; break;
     default: content=profile ? <LiveAdminDashboard profile={profile} openDatabase={openDatabase}/> : null;
   }
-  return <AppShell screen={screen} setScreen={setScreen} role={role} selectedDatabase={selectedDatabase} openDatabase={openDatabase} pendingApprovalCount={pendingApprovalCount} onSignOut={signOut}>{content}</AppShell>;
+  return <AppShell screen={screen} setScreen={setScreen} profile={profile!} role={role} selectedDatabase={selectedDatabase} openDatabase={openDatabase} pendingApprovalCount={pendingApprovalCount} onSignOut={signOut}>{content}</AppShell>;
 }
