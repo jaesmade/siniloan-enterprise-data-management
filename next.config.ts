@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["192.168.68.105"],
   poweredByHeader: false,
+  async rewrites() {
+    return [{ source: "/supabase/:path*", destination: "http://127.0.0.1:54321/:path*" }];
+  },
   async headers() {
     return [{
       source: "/:path*",

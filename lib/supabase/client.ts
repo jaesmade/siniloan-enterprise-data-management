@@ -8,8 +8,10 @@ let browserClient: ReturnType<typeof createBrowserClient> | undefined;
 
 export function createClient() {
   const { url, publishableKey } = getPublicSupabaseEnv();
-  const isLocalBrowser = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  const browserUrl = isLocalBrowser ? "http://127.0.0.1:54321" : url;
+  // Browsers may be on the LAN while Supabase is intentionally bound to the
+  // host loopback interface. Proxy browser requests through Next so both
+  // localhost and LAN clients use the same trusted application origin.
+  const browserUrl = typeof window !== "undefined" ? `${window.location.origin}/supabase` : url;
   browserClient ??= createBrowserClient(browserUrl, publishableKey);
   return browserClient;
 }
