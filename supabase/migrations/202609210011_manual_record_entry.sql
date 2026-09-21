@@ -39,7 +39,7 @@ begin
       (department_id,source_person_id,surname,first_name,middle_name,suffix,birth_date,sex,email,mobile_number,metadata,created_by,updated_by)
     values
       (department_id,nullif(trim(p_data->>'source_person_id'),''),trim(p_data->>'surname'),trim(p_data->>'first_name'),nullif(trim(p_data->>'middle_name'),''),nullif(trim(p_data->>'suffix'),''),nullif(p_data->>'birth_date','')::date,nullif(trim(p_data->>'sex'),''),nullif(trim(p_data->>'email'),''),nullif(trim(p_data->>'mobile_number'),''),
-       jsonb_build_object('EMPLOYMENT STATUS',nullif(trim(p_data->>'employment_status'),''),'PREFERRED CCUPATION/S',nullif(trim(p_data->>'preferred_occupation'),''),'ENTRY METHOD','Manual'),auth.uid(),auth.uid())
+       coalesce(p_data->'metadata','{}'::jsonb) || jsonb_build_object('EMPLOYMENT STATUS',nullif(trim(p_data->>'employment_status'),''),'HIGHEST EDUCATIONAL ATTAINMENT',nullif(trim(p_data->>'highest_education'),''),'PREFERRED CCUPATION/S',nullif(trim(p_data->>'preferred_occupation'),''),'ENTRY METHOD','Manual'),auth.uid(),auth.uid())
     returning id, concat_ws(' ',first_name,middle_name,surname) into record_id,record_label;
   elsif p_module = 'research' then
     if length(trim(coalesce(p_data->>'requester_name',''))) not between 2 and 160 or length(trim(coalesce(p_data->>'research_title_purpose',''))) not between 2 and 1000 then

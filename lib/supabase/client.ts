@@ -8,6 +8,8 @@ let browserClient: ReturnType<typeof createBrowserClient> | undefined;
 
 export function createClient() {
   const { url, publishableKey } = getPublicSupabaseEnv();
-  browserClient ??= createBrowserClient(url, publishableKey);
+  const isLocalBrowser = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const browserUrl = isLocalBrowser ? "http://127.0.0.1:54321" : url;
+  browserClient ??= createBrowserClient(browserUrl, publishableKey);
   return browserClient;
 }
