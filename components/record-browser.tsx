@@ -5,10 +5,11 @@ import { createClient } from '@/lib/supabase/client';
 
 type Row = { id: string; [key: string]: unknown };
 type Result = { rows: Row[]; total: number; page: number; statuses: string[] };
-export function RecordBrowser({ database, columns, prepare, display }: {
+export function RecordBrowser({ database, columns, prepare, display, refreshKey = 0 }: {
   database: 'jobseekers' | 'research' | 'biometrics'; columns: Array<[string,string]>;
   prepare: (database: 'jobseekers' | 'research' | 'biometrics', rows: Row[]) => Row[];
   display: (value: unknown) => string;
+  refreshKey?: number;
 }) {
   const [filters,setFilters]=useState({search:'',status:'',secondary:'',from:'',to:'',sort:'created_at',desc:true,page:1,size:25});
   const [result,setResult]=useState<Result|null>(null);
@@ -38,7 +39,7 @@ export function RecordBrowser({ database, columns, prepare, display }: {
       }
     },250);
     return()=>{clearTimeout(timer);controller.abort();};
-  },[database,filters,key,invalid,retry]);
+  },[database,filters,key,invalid,retry,refreshKey]);
   const page=result?.page??1;
   const total=result?.total??0;
   const pages=Math.max(1,Math.ceil(total/filters.size));
