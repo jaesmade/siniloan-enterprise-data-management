@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(20);
 
 select has_schema('core', 'core schema exists');
 select has_schema('jobseekers', 'jobseekers schema exists');
@@ -24,6 +24,10 @@ select ok((select relrowsecurity from pg_class where oid = 'research.requests'::
 select ok((select relrowsecurity from pg_class where oid = 'biometrics.device_events'::regclass), 'biometric events has RLS enabled');
 
 select is(core.can_access_dataset('research_requests'), false, 'anonymous database context has no dataset access');
+
+select has_table('core', 'rate_limit_buckets', 'rate limit buckets table exists');
+select ok((select relrowsecurity from pg_class where oid = 'core.rate_limit_buckets'::regclass), 'rate limit buckets have RLS enabled');
+select has_function('core', 'check_rate_limit', array['text', 'text', 'integer', 'integer'], 'database rate limiter exists');
 
 select * from finish();
 rollback;

@@ -5,10 +5,12 @@ import * as XLSX from "@e965/xlsx";
 import { createClient } from "@supabase/supabase-js";
 
 import { getPublicSupabaseEnv } from "@/lib/supabase/env";
+import { checkRateLimit, isSameOrigin, rateLimitHeaders, requestFingerprint } from "@/lib/security/request-security";
 
 export const runtime = "nodejs";
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 25_000;
 const DATASETS = {
   jobseekers: { slug: "jobseeker_registry", department: "PESO", schema: "jobseekers", table: "people" },
   research: { slug: "research_requests", department: "MPDO", schema: "research", table: "requests" },
@@ -207,6 +209,13 @@ function mapRow(
 }
 
 export async function POST(request: Request) {
+  if (!isSameOrigin(request)) return Response.json({ error: "Cross-origin requests are not allowed." }, { status: 403 });
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    return Response.json({ error: "Content-Type must be multipart/form-data." }, { status: 415 });
+  }
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_FILE_SIZE + 1_048_576) return Response.json({ error: "The upload request is too large." }, { status: 413 });
+
   const authorization = request.headers.get("authorization");
   const token = authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return Response.json({ error: "Sign in before importing data." }, { status: 401 });
@@ -226,6 +235,14 @@ export async function POST(request: Request) {
   const { data: authData, error: authError } = await supabase.auth.getUser(token);
   if (authError || !authData.user) return Response.json({ error: "Your session is no longer valid. Sign in again." }, { status: 401 });
 
+  const rateLimit = await checkRateLimit("data.import", requestFingerprint(request, authData.user.id), 10, 60 * 60);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: "Import limit reached. Try again later." },
+      { status: 429, headers: rateLimitHeaders(rateLimit, 10) },
+    );
+  }
+
   let rows: SourceRow[];
   try {
     rows = await readRows(file, destination);
@@ -233,6 +250,7 @@ export async function POST(request: Request) {
     return Response.json({ error: error instanceof Error ? error.message : "The file could not be read." }, { status: 400 });
   }
   if (rows.length === 0) return Response.json({ error: "The file does not contain any data rows." }, { status: 400 });
+  if (rows.length > MAX_IMPORT_ROWS) return Response.json({ error: `Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString()} rows per file.` }, { status: 413 });
 
   const config = DATASETS[destination];
   const { data: departments, error: departmentError } = await supabase
@@ -309,12 +327,8 @@ export async function POST(request: Request) {
     return Response.json({ error: completeError.message }, { status: 500 });
   }
 
-  return Response.json({
-    jobId,
-    filename: file.name,
-    total: rows.length,
-    accepted,
-    rejected: errors.length,
-    errors: errors.slice(0, 10),
-  });
+  return Response.json(
+    { jobId, filename: file.name, total: rows.length, accepted, rejected: errors.length, errors: errors.slice(0, 10) },
+    { headers: { "Cache-Control": "no-store", "X-RateLimit-Limit": "10", "X-RateLimit-Remaining": String(rateLimit.remaining) } },
+  );
 }
