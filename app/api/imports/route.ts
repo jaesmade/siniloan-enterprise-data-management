@@ -9,6 +9,7 @@ import { getPublicSupabaseEnv } from "@/lib/supabase/env";
 import { checkRateLimit, isSameOrigin, rateLimitHeaders, requestFingerprint } from "@/lib/security/request-security";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_IMPORT_ROWS = 25_000;

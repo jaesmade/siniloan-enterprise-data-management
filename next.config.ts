@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.68.105"],
   poweredByHeader: false,
   async rewrites() {
+    if (process.env.NODE_ENV !== "development") return [];
     return [{ source: "/supabase/:path*", destination: "http://127.0.0.1:54321/:path*" }];
   },
   async headers() {
