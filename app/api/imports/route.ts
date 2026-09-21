@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 
 import ExcelJS from "exceljs";
 import * as XLSX from "@e965/xlsx";
@@ -208,6 +209,41 @@ function mapRow(
   };
 }
 
+function duplicateKey(module: ModuleKey, record: Record<string, unknown>) {
+  const normalize = (value: unknown) => String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (module === "jobseekers") return [record.surname, record.first_name, record.birth_date].map(normalize).join("|");
+  if (module === "research") return normalize(record.control_number) || [record.requester_name, record.research_title_purpose].map(normalize).join("|");
+  return [record.personnel_number, record.occurred_at, record.attendance_status].map(normalize).join("|");
+}
+
+function previewRecord(module: ModuleKey, record: Record<string, unknown>) {
+  if (module === "jobseekers") return { name: [record.first_name, record.middle_name, record.surname].filter(Boolean).join(" "), birth_date: record.birth_date ?? "—", contact: record.mobile_number ?? "—" };
+  if (module === "research") return { requester: record.requester_name ?? "—", control_number: record.control_number ?? "—", purpose: record.research_title_purpose ?? "—" };
+  return { name: record.person_name ?? "—", personnel_number: record.personnel_number ?? "—", occurred_at: record.occurred_at ?? "—" };
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+}
+
+export async function GET(request: Request) {
+  if (!isSameOrigin(request)) return Response.json({ error: "Cross-origin requests are not allowed." }, { status: 403 });
+  const jobId = new URL(request.url).searchParams.get("jobId");
+  if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) return Response.json({ error: "Choose a valid import job." }, { status: 400 });
+  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token) return Response.json({ error: "Sign in before downloading errors." }, { status: 401 });
+  const { url, publishableKey } = getPublicSupabaseEnv();
+  const supabase = createClient(url, publishableKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false, autoRefreshToken: false } });
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData.user) return Response.json({ error: "Your session is no longer valid. Sign in again." }, { status: 401 });
+  const { data, error } = await supabase.schema("core").from("import_row_errors").select("source_row_number, field_name, error_code, message").eq("import_job_id", jobId).order("source_row_number");
+  if (error) return Response.json({ error: error.message }, { status: 403 });
+  const csv = [["Source row", "Field", "Error code", "Message"], ...(data ?? []).map((item) => [item.source_row_number, item.field_name, item.error_code, item.message])].map((row) => row.map(csvCell).join(",")).join("\n");
+  return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="import-errors-${jobId}.csv"`, "Cache-Control": "no-store" } });
+}
+
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return Response.json({ error: "Cross-origin requests are not allowed." }, { status: 403 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
@@ -221,11 +257,13 @@ export async function POST(request: Request) {
   if (!token) return Response.json({ error: "Sign in before importing data." }, { status: 401 });
 
   const form = await request.formData();
+  const mode = String(form.get("mode") ?? "commit");
   const destination = String(form.get("module") ?? "") as ModuleKey;
   const file = form.get("file");
   if (!(destination in DATASETS)) return Response.json({ error: "Choose a valid destination database." }, { status: 400 });
   if (!(file instanceof File)) return Response.json({ error: "Choose a file to import." }, { status: 400 });
   if (file.size > MAX_FILE_SIZE) return Response.json({ error: "The file exceeds the 25 MB limit." }, { status: 413 });
+  const checksum = createHash("sha256").update(Buffer.from(await file.arrayBuffer())).digest("hex");
 
   const { url, publishableKey } = getPublicSupabaseEnv();
   const supabase = createClient(url, publishableKey, {
@@ -262,17 +300,13 @@ export async function POST(request: Request) {
   const defaultDepartment = departments?.find((item) => item.code === config.department);
   if (!defaultDepartment) return Response.json({ error: "The destination department is not configured." }, { status: 500 });
 
-  const { data: jobId, error: beginError } = await supabase.schema("core").rpc("begin_import", {
-    dataset_slug: config.slug,
-    source_filename: file.name,
-    total_rows: rows.length,
-  });
-  if (beginError || !jobId) {
-    return Response.json({ error: beginError?.message ?? "The import job could not be created." }, { status: 403 });
-  }
+  const { data: priorJobs } = await supabase.schema("core").from("import_jobs").select("id, status, source_filename, created_at").eq("file_sha256", checksum).order("created_at", { ascending: false }).limit(1);
+  const duplicateImport = priorJobs?.[0] ?? null;
 
   const errors: ImportError[] = [];
   const mappedRows: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  let duplicateRows = 0;
   for (const row of rows) {
     let departmentId = defaultDepartment.id;
     if (destination === "biometrics") {
@@ -281,22 +315,42 @@ export async function POST(request: Request) {
       if (match) departmentId = match.id;
     }
     try {
-      mappedRows.push(mapRow(destination, row, jobId, authData.user.id, departmentId));
+      const record = mapRow(destination, row, "00000000-0000-0000-0000-000000000000", authData.user.id, departmentId);
+      const key = duplicateKey(destination, record);
+      if (key && seen.has(key)) { duplicateRows += 1; errors.push({ source_row_number: row.sourceRowNumber, error_code: "duplicate_in_file", message: "This row duplicates an earlier row in the upload." }); continue; }
+      if (key) seen.add(key);
+      mappedRows.push(record);
     } catch (error) {
-      errors.push({
-        source_row_number: row.sourceRowNumber,
-        error_code: "validation_failed",
-        message: error instanceof Error ? error.message : "The row is invalid.",
-      });
+      errors.push({ source_row_number: row.sourceRowNumber, error_code: "validation_failed", message: error instanceof Error ? error.message : "The row is invalid." });
     }
   }
 
+  if (mode === "preview") return Response.json({
+    filename: file.name, checksum, total: rows.length, valid: mappedRows.length, rejected: errors.length,
+    duplicateRows, duplicateImport: duplicateImport ? { ...duplicateImport, repeated: true } : null,
+    preview: mappedRows.slice(0, 12).map((record) => previewRecord(destination, record)), errors,
+  }, { headers: { "Cache-Control": "no-store" } });
+  if (mode !== "commit") return Response.json({ error: "Choose a valid import operation." }, { status: 400 });
+  if (duplicateImport?.status === "completed") return Response.json({ error: `This file was already imported on ${new Date(duplicateImport.created_at).toLocaleString("en-PH")}. Review its history entry instead.` }, { status: 409 });
+
+  const { data: jobId, error: beginError } = await supabase.schema("core").rpc("begin_import", {
+    dataset_slug: config.slug,
+    source_filename: file.name,
+    total_rows: rows.length,
+  });
+  if (beginError || !jobId) {
+    return Response.json({ error: beginError?.message ?? "The import job could not be created." }, { status: 403 });
+  }
+  await supabase.schema("core").rpc("set_import_fingerprint", { p_import_job_id: jobId, p_file_sha256: checksum, p_validation_summary: { valid_rows: mappedRows.length, rejected_rows: errors.length, duplicate_rows: duplicateRows } });
+  const committedRows = mappedRows.map((record) => ({ ...record, import_job_id: jobId }));
+
   let accepted = 0;
-  for (let offset = 0; offset < mappedRows.length; offset += 100) {
-    const batch = mappedRows.slice(offset, offset + 100);
+  for (let offset = 0; offset < committedRows.length; offset += 100) {
+    const batch = committedRows.slice(offset, offset + 100);
     const { error: batchError } = await supabase.schema(config.schema).from(config.table).insert(batch);
     if (!batchError) {
       accepted += batch.length;
+      await supabase.schema("core").rpc("update_import_progress", { p_import_job_id: jobId, p_processed_rows: Math.min(rows.length, offset + batch.length + errors.length) });
       continue;
     }
 
@@ -306,7 +360,7 @@ export async function POST(request: Request) {
       const { error } = await supabase.schema(config.schema).from(config.table).insert(record);
       if (error) {
         errors.push({
-          source_row_number: Number(record.source_row_number),
+          source_row_number: Number((record as Record<string, unknown>).source_row_number),
           error_code: error.code || "insert_failed",
           message: error.message,
         });
@@ -314,6 +368,7 @@ export async function POST(request: Request) {
         accepted += 1;
       }
     }
+    await supabase.schema("core").rpc("update_import_progress", { p_import_job_id: jobId, p_processed_rows: Math.min(rows.length, offset + batch.length + errors.length) });
   }
 
   const { error: completeError } = await supabase.schema("core").rpc("complete_import", {
@@ -328,7 +383,7 @@ export async function POST(request: Request) {
   }
 
   return Response.json(
-    { jobId, filename: file.name, total: rows.length, accepted, rejected: errors.length, errors: errors.slice(0, 10) },
+    { jobId, filename: file.name, total: rows.length, accepted, rejected: errors.length, duplicateRows, errors: errors.slice(0, 1000) },
     { headers: { "Cache-Control": "no-store", "X-RateLimit-Limit": "10", "X-RateLimit-Remaining": String(rateLimit.remaining) } },
   );
 }
