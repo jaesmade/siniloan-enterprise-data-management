@@ -5,6 +5,8 @@ const supabaseOrigin = (() => {
   catch { return "http://127.0.0.1:54321"; }
 })();
 const supabaseSocketOrigin = supabaseOrigin.replace(/^http/, "ws");
+const scriptPolicy = process.env.NODE_ENV === "development" ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self' 'unsafe-inline'";
+const transportPolicy = process.env.NODE_ENV === "production" ? "; upgrade-insecure-requests" : "";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -13,7 +15,7 @@ const nextConfig: NextConfig = {
     return [{
       source: "/:path*",
       headers: [
-        { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' ${supabaseOrigin} ${supabaseSocketOrigin}; upgrade-insecure-requests` },
+        { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; ${scriptPolicy}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' ${supabaseOrigin} ${supabaseSocketOrigin}${transportPolicy}` },
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "X-Frame-Options", value: "DENY" },
