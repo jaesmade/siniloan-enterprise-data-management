@@ -158,8 +158,18 @@ const navItems: { screen: Screen; label: string; icon: typeof House; roles?: Rol
   { screen: "import", label: "Imports", icon: FileArrowUp },
 ];
 
-function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => void }) {
+function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => Promise<void> }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  useEffect(() => {
+    if (!confirmSignOut) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !signingOut) setConfirmSignOut(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", closeOnEscape); document.body.style.overflow = ""; };
+  }, [confirmSignOut, signingOut]);
+  const completeSignOut = async () => { setSigningOut(true); try { await onSignOut(); } finally { setSigningOut(false); setConfirmSignOut(false); } };
   return <div className="app-shell">
     <a href="#main-content" className="skip-link">Skip to main content</a>
     <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
@@ -170,10 +180,11 @@ function AppShell({ screen, setScreen, role, selectedDatabase, openDatabase, pen
         <div className="nav-label">Databases</div>
         {(Object.keys(databaseMeta) as DatabaseKey[]).map(key => <button key={key} className={screen === "database" && selectedDatabase === key ? "subtle-active database-active" : ""} onClick={() => { openDatabase(key); setMobileOpen(false); }}><span className="db-dot" style={{ background: databaseMeta[key].color }} /> <span>{databaseMeta[key].name}</span></button>)}
       </nav>
-      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><div className="user-chip"><div className="avatar">AR</div><div><strong>Signed-in account</strong><span>{role}</span></div><button aria-label="Sign out" onClick={onSignOut}><SignOut /></button></div></div>
+      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><div className="user-chip"><div className="avatar">AR</div><div><strong>Signed-in account</strong><span>{role}</span></div><button aria-label="Sign out" onClick={()=>setConfirmSignOut(true)}><SignOut /></button></div></div>
     </aside>
     {mobileOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
     <div className="app-main"><header className="topbar"><button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button><div className="top-search"><MagnifyingGlass /><input aria-label="Search all databases" placeholder="Search records, people, or requests…" /><kbd>⌘ K</kbd></div><div className="top-actions"><button aria-label="Notifications" className="icon-button"><Bell /><span className="notify-dot" /></button><button className="help-button">Help & support</button></div></header><main id="main-content">{children}</main></div>
+    {confirmSignOut&&<div className="modal-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget&&!signingOut)setConfirmSignOut(false)}}><section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-description"><div className="confirmation-icon"><SignOut weight="duotone"/></div><h2 id="signout-title">Sign out of the system?</h2><p id="signout-description">Your secure session will end. You will need to enter your username and password to access municipal data again.</p><div className="confirmation-actions"><button className="button secondary" autoFocus onClick={()=>setConfirmSignOut(false)} disabled={signingOut}>Cancel</button><button className="button danger-solid" onClick={completeSignOut} disabled={signingOut}>{signingOut?<><SpinnerGap className="spin"/> Signing out…</>:<><SignOut/> Sign out</>}</button></div></section></div>}
   </div>;
 }
 
