@@ -27,10 +27,13 @@ export async function POST(request: Request) {
   const { data: profile, error: lookupError } = await admin
     .schema("core")
     .from("profiles")
-    .select("email")
+    .select("id, email")
     .ilike("username", username)
     .maybeSingle();
-  if (lookupError || !profile?.email) return invalidCredentials();
+  if (lookupError || !profile?.email) {
+    await admin.schema("core").rpc("record_auth_event", { event_actor_id: null, attempted_username: username, event_outcome: "failure" });
+    return invalidCredentials();
+  }
 
   const { url, publishableKey } = getPublicSupabaseEnv();
   const supabase = createClient(url, publishableKey, {
@@ -40,7 +43,12 @@ export async function POST(request: Request) {
     email: profile.email,
     password,
   });
-  if (error || !data.session) return invalidCredentials();
+  if (error || !data.session) {
+    await admin.schema("core").rpc("record_auth_event", { event_actor_id: profile.id, attempted_username: username, event_outcome: "failure" });
+    return invalidCredentials();
+  }
+
+  await admin.schema("core").rpc("record_auth_event", { event_actor_id: profile.id, attempted_username: username, event_outcome: "success" });
 
   return Response.json(
     {
