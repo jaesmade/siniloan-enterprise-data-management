@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(21);
 
 select has_schema('core', 'core schema exists');
 select has_schema('jobseekers', 'jobseekers schema exists');
@@ -28,6 +28,7 @@ select is(core.can_access_dataset('research_requests'), false, 'anonymous databa
 select has_table('core', 'rate_limit_buckets', 'rate limit buckets table exists');
 select ok((select relrowsecurity from pg_class where oid = 'core.rate_limit_buckets'::regclass), 'rate limit buckets have RLS enabled');
 select has_function('core', 'check_rate_limit', array['text', 'text', 'integer', 'integer'], 'database rate limiter exists');
+select has_function('core', 'query_records', array['text', 'text', 'text', 'text', 'date', 'date', 'text', 'boolean', 'integer', 'integer'], 'paginated record query exists');
 
 select * from finish();
 rollback;
