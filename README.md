@@ -10,6 +10,7 @@ An internal municipal data-governance application for Siniloan. It provides cont
 - Applies role- and dataset-level access controls for DPOs, Data Stewards, and Staff.
 - Manages the Jobseeker Registry, Research & Data Requests, and Biometrics Data modules.
 - Supports searchable, paginated record views, controlled manual entry, dashboards, and audit activity.
+- Lets users with read/write access edit individual records in all three datasets; edits are version checked and audited.
 - Imports CSV and XLSX files into all datasets; legacy XLS is supported for biometrics only.
 - Previews imports, rejects invalid/duplicate rows, records import jobs and row errors, and allows error CSV downloads.
 - Enforces database-level protections with Supabase Auth, PostgreSQL Row Level Security (RLS), audited operations, and rate limiting.
@@ -80,6 +81,21 @@ Dataset grants are independent of roles and may be `read_only` or `read_write`. 
    Open [http://localhost:3000](http://localhost:3000).
 
 Local database migrations are applied when the Supabase stack is initialized. To recreate the local database from migrations, use `npm run db:reset`; it removes local database data.
+
+## Local network deployment on this Windows PC
+
+This PC can serve the app to other devices on its current LAN at `http://192.168.1.101:3001`. The application uses a production build and routes browser Supabase requests through the app; devices do not need direct access to the Supabase ports.
+
+1. Build once after code or environment changes: `npm.cmd run build`.
+2. Start the local deployment now: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-server.ps1`.
+3. Install automatic startup for this Windows user: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-local-startup.ps1`. The task starts Docker Desktop, Supabase, and the app **after this user signs in**. It does not run before Windows sign-in. Startup and app logs are `local-server-startup.log`, `local-server-app.log`, and `local-server-app-error.log`.
+4. In an **Administrator PowerShell** window, change to this project directory first, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\enable-lan-firewall.ps1`. The `-File` path is relative to the window's current directory. This permits port 3001 from `192.168.1.0/24` and blocks direct LAN access to the local Supabase ports. Windows Firewall currently treats the Ethernet connection as Public, so other devices cannot connect until this rule is installed.
+
+Keep the PC awake, signed in, and connected to the LAN. Reserve `192.168.1.101` for this PC in the router's DHCP settings; if its address or subnet changes, update `supabase/config.toml`, `scripts/enable-lan-firewall.ps1`, and this URL, then restart Supabase and rebuild/restart the app. To remove automatic startup, run `Unregister-ScheduledTask -TaskName 'Siniloan Enterprise Data Management' -Confirm:$false`.
+
+This HTTP and local Supabase CLI setup is suitable for test data on a trusted LAN. Before using real municipal or biometric records, add trusted HTTPS, replace local development credentials, secure backups, and review the database and host security controls.
+
+For a fresh local database with no DPO account, `node .\scripts\bootstrap-local-dpo.mjs` creates the first `admin` account with a generated password, activates its DPO profile, and records the bootstrap in the account decisions and audit log. It refuses to run if an active DPO or the `admin` username already exists. Store the printed password securely; the synthetic local email cannot receive recovery messages.
 
 ## Common commands
 

@@ -12,6 +12,7 @@ coverage
 .env*
 !.env.example
 .env.local
+supabase/.temp/
 
 # logs
 *.log

@@ -8,9 +8,13 @@ let browserClient: ReturnType<typeof createBrowserClient> | undefined;
 
 export function createClient() {
   const { url, publishableKey } = getPublicSupabaseEnv();
-  // Local Supabase is bound to loopback, so development browser traffic uses
-  // Next's proxy. Hosted Supabase must be contacted directly in production.
-  const browserUrl = process.env.NODE_ENV === "development" && typeof window !== "undefined"
+  // A loopback Supabase URL belongs to the server PC, not a visitor's device.
+  // Route browser requests through this app for local deployments.
+  const localSupabase = (() => {
+    try { return ["localhost", "127.0.0.1", "::1"].includes(new URL(url).hostname); }
+    catch { return false; }
+  })();
+  const browserUrl = localSupabase && typeof window !== "undefined"
     ? `${window.location.origin}/supabase`
     : url;
   browserClient ??= createBrowserClient(browserUrl, publishableKey);
