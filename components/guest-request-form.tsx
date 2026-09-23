@@ -1,10 +1,154 @@
 "use client";
-import { useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle, SpinnerGap, UploadSimple } from "@phosphor-icons/react";
 
-export function Landing({onRequest,onSignIn}:{onRequest:()=>void;onSignIn:()=>void}){return <main className="guest-landing"><div className="guest-landing-brand"><span className="seal"><span>S</span></span><span>Municipality of Siniloan<br/><strong>Enterprise Data Management</strong></span></div><section><p className="guest-kicker">Public access</p><h1>Request municipal data</h1><p>Submit a data or interview request for review by the municipal Data Protection Officer. Staff can sign in to their assigned workspace.</p><div className="guest-actions"><button className="button primary" onClick={onRequest}>Request data <ArrowRight/></button><button className="button secondary" onClick={onSignIn}>Staff sign in</button></div></section><footer>Requests are reviewed before any data is released.</footer></main>}
+import { useState, type ChangeEvent, type FormEvent } from "react";
+import { ArrowLeft, ArrowRight, CheckCircle, IdentificationCard, ShieldCheck, SpinnerGap, UploadSimple } from "@phosphor-icons/react";
 
-export function GuestRequestForm({onBack}:{onBack:()=>void}){const [type,setType]=useState("data_request");const [name,setName]=useState("");const [email,setEmail]=useState("");const [institution,setInstitution]=useState("");const [purpose,setPurpose]=useState("");const [identification,setIdentification]=useState<File|null>(null);const [letter,setLetter]=useState<File|null>(null);const [busy,setBusy]=useState(false);const [error,setError]=useState("");const [receipt,setReceipt]=useState<{control_number:string}|null>(null);
- const submit=async(event:React.FormEvent)=>{event.preventDefault();setBusy(true);setError("");const form=new FormData();form.set("request_type",type);form.set("requester_name",name);form.set("email",email);form.set("institution_office",institution);form.set("research_title_purpose",purpose);if(identification)form.set("identification",identification);if(letter)form.set("request_letter",letter);try{const response=await fetch("/api/data-requests",{method:"POST",body:form});const result=await response.json();if(!response.ok)throw new Error(result.error??"Your request could not be submitted.");setReceipt(result);}catch(e){setError(e instanceof Error?e.message:"Your request could not be submitted.");}finally{setBusy(false);}};
- return <main className="guest-request-page"><button className="button secondary" onClick={onBack}><ArrowLeft/> Back</button><section className="panel guest-request-card">{receipt?<div className="guest-receipt"><CheckCircle/><h1>Request submitted</h1><p>Your request is in the DPO review queue.</p><strong>Control number: {receipt.control_number}</strong><button className="button primary" onClick={onBack}>Done</button></div>:<><header><h1>Request data</h1><p>Complete the form and attach both your ID and request letter. Images are stored privately for DPO review.</p></header><form onSubmit={submit}><label>Request type<select value={type} onChange={e=>setType(e.target.value)}><option value="data_request">Data Request</option><option value="interview_request">Interview Request</option></select></label><label>Full name<input value={name} onChange={e=>setName(e.target.value)} maxLength={160} required/></label><label>Email address<input type="email" value={email} onChange={e=>setEmail(e.target.value)} maxLength={254} required/></label><label>School / institution / office<input value={institution} onChange={e=>setInstitution(e.target.value)} maxLength={240}/></label><label>Request purpose<textarea value={purpose} onChange={e=>setPurpose(e.target.value)} maxLength={1000} required/></label><label className="guest-file-field"><span>Identification image</span><small>JPG, PNG, or WebP · up to 5 MB</small><span className="button secondary"><UploadSimple/> {identification?.name??"Choose ID image"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setIdentification(e.target.files?.[0]??null)} required/></span></label><label className="guest-file-field"><span>Request letter image</span><small>JPG, PNG, or WebP · up to 5 MB</small><span className="button secondary"><UploadSimple/> {letter?.name??"Choose request image"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setLetter(e.target.files?.[0]??null)} required/></span></label>{error&&<p className="form-error" role="alert">{error}</p>}<button className="button primary full" disabled={busy}>{busy?<><SpinnerGap className="spin"/> Sending…</>:<>Submit request <ArrowRight/></>}</button></form></>}</section></main>
+type RequestType = "data_request" | "interview_request";
+
+export function Landing({ onRequest, onSignIn }: { onRequest: () => void; onSignIn: () => void }) {
+  return <main className="guest-landing">
+    <div className="guest-landing-brand"><span className="seal"><span>S</span></span><span>Municipality of Siniloan<br/><strong>Enterprise Data Management</strong></span></div>
+    <section><h1>Request municipal data</h1><p>Submit a data or interview request for review by the municipal Data Protection Officer. Staff can sign in to their assigned workspace.</p><div className="guest-actions"><button className="button primary" onClick={onRequest}>Request data <ArrowRight/></button><button className="button secondary" onClick={onSignIn}>Staff sign in</button></div></section>
+    <footer>Requests are reviewed before any data is released.</footer>
+  </main>;
+}
+
+function RequestImageField({ id, title, hint, file, required, onChange }: {
+  id: string;
+  title: string;
+  hint: string;
+  file: File | null;
+  required?: boolean;
+  onChange: (file: File | null) => void;
+}) {
+  const [issue, setIssue] = useState("");
+  const choose = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    setIssue("");
+    if (nextFile && nextFile.size > 5 * 1024 * 1024) {
+      setIssue("This image is over 5 MB. Choose a smaller file.");
+      onChange(null);
+      event.target.value = "";
+      return;
+    }
+    onChange(nextFile);
+  };
+
+  return <div className={`request-upload ${file ? "has-file" : ""}`}>
+    <input id={id} type="file" accept="image/jpeg,image/png,image/webp" onChange={choose} required={required && !file}/>
+    <label htmlFor={id} className="request-upload-control">
+      <span className="request-upload-icon">{file ? <CheckCircle weight="fill"/> : <UploadSimple/>}</span>
+      <span className="request-upload-copy"><strong>{file?.name ?? title}</strong><small>{file ? `${(file.size / 1024).toLocaleString(undefined, { maximumFractionDigits: 0 })} KB · Ready to upload` : hint}</small></span>
+      <span className="request-upload-action">{file ? "Replace" : "Browse"}</span>
+    </label>
+    {issue && <small className="request-upload-error" role="alert">{issue}</small>}
+  </div>;
+}
+
+export function GuestRequestForm({ onBack }: { onBack: () => void }) {
+  const [type, setType] = useState<RequestType>("data_request");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [institution, setInstitution] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [identification, setIdentification] = useState<File | null>(null);
+  const [letter, setLetter] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [receipt, setReceipt] = useState<{ control_number: string } | null>(null);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!identification || !letter) {
+      setError("Attach both your ID image and request letter image to continue.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const form = new FormData();
+    form.set("request_type", type);
+    form.set("requester_name", name.trim());
+    form.set("email", email.trim());
+    form.set("institution_office", institution.trim());
+    form.set("research_title_purpose", purpose.trim());
+    form.set("identification", identification);
+    form.set("request_letter", letter);
+
+    try {
+      const response = await fetch("/api/data-requests", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Your request could not be submitted.");
+      setReceipt(result);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Your request could not be submitted.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <main className="guest-request-page">
+    <div className="guest-request-shell">
+      <header className="guest-request-top">
+        <div className="guest-landing-brand"><span className="seal"><span>S</span></span><span>Municipality of Siniloan<br/><strong>Enterprise Data Management</strong></span></div>
+        <button type="button" className="guest-home-link" onClick={onBack}><ArrowLeft/> Return to home</button>
+      </header>
+
+      <div className={`guest-request-layout ${receipt ? "receipt-layout" : ""}`}>
+        {!receipt && <aside className="guest-request-aside">
+
+          <h1>Start a request with the municipality.</h1>
+          <p className="guest-request-intro">Share what you need and how to contact you. The Data Protection Officer reviews each request before a decision is made.</p>
+          <div className="guest-request-steps">
+            <div><span>1</span><p><strong>Tell us about yourself</strong><small>Provide your name and a working email address.</small></p></div>
+            <div><span>2</span><p><strong>Describe your request</strong><small>Choose a request type and explain its purpose.</small></p></div>
+            <div><span>3</span><p><strong>Attach two images</strong><small>Include an ID image and an image of your request letter.</small></p></div>
+          </div>
+          <div className="guest-privacy-note"><ShieldCheck/><p><strong>Private review</strong><small>Your attachments are kept private for DPO review.</small></p></div>
+        </aside>}
+
+        <section className="panel guest-request-card">
+          {receipt ? <div className="guest-receipt">
+            <span className="guest-receipt-icon"><CheckCircle weight="fill"/></span>
+            <h1>Request received</h1>
+            <p>Your request has been submitted for DPO review. Keep this reference number for your records.</p>
+            <div className="guest-reference"><span>Request control number</span><strong>{receipt.control_number}</strong></div>
+            <div className="guest-receipt-note"><ShieldCheck/><span>The DPO will review your submission before any data is released.</span></div>
+            <button type="button" className="button primary" onClick={onBack}>Return to home <ArrowRight/></button>
+          </div> : <>
+            <header className="guest-form-heading"><div><h2>Request details</h2><p>Fields marked required must be completed.</p></div><span className="guest-required-note"><i/> Required</span></header>
+            <form onSubmit={submit}>
+              <fieldset className="guest-form-section">
+                <legend>Your details</legend>
+                <div className="guest-form-grid">
+                  <label>Full name <span className="required-mark">*</span><input value={name} onChange={e => setName(e.target.value)} maxLength={160} autoComplete="name" placeholder="Name as shown on your ID" required/></label>
+                  <label>Email address <span className="required-mark">*</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} maxLength={254} autoComplete="email" placeholder="you@example.com" required/></label>
+                  <label className="guest-form-wide">School, institution, or office <span className="guest-optional">Optional</span><input value={institution} onChange={e => setInstitution(e.target.value)} maxLength={240} autoComplete="organization" placeholder="Where you are making this request from"/></label>
+                </div>
+              </fieldset>
+
+              <fieldset className="guest-form-section">
+                <legend>Request information</legend>
+                <div className="guest-form-grid">
+                  <label className="guest-form-wide">Request type <span className="required-mark">*</span><select value={type} onChange={e => setType(e.target.value as RequestType)}><option value="data_request">Data request</option><option value="interview_request">Interview request</option></select><small className="field-hint">Choose the option that best matches what you are requesting.</small></label>
+                  <label className="guest-form-wide">Purpose of your request <span className="required-mark">*</span><textarea value={purpose} onChange={e => setPurpose(e.target.value)} maxLength={1000} placeholder="Describe the information or interview you are requesting and how it will be used." required/><small className="field-hint">{purpose.length}/1000 characters</small></label>
+                </div>
+              </fieldset>
+
+              <fieldset className="guest-form-section guest-attachments-section">
+                <legend>Supporting images</legend>
+                <p className="guest-section-hint">Upload a clear image of your ID and a clear image of your request letter. JPG, PNG, or WebP; maximum 5 MB each.</p>
+                <div className="guest-upload-grid">
+                  <div><span className="guest-upload-label"><IdentificationCard/> Identification image <span className="required-mark">*</span></span><RequestImageField id="request-identification" title="Choose ID image" hint="Browse for your ID image" file={identification} required onChange={setIdentification}/></div>
+                  <div><span className="guest-upload-label"><UploadSimple/> Request letter image <span className="required-mark">*</span></span><RequestImageField id="request-letter" title="Choose request image" hint="Browse for your request letter" file={letter} required onChange={setLetter}/></div>
+                </div>
+              </fieldset>
+
+              {error && <p className="guest-form-error" role="alert">{error}</p>}
+              <footer className="guest-submit-row"><span><ShieldCheck/> Attachments are kept private for review.</span><button className="button primary" disabled={busy}>{busy ? <><SpinnerGap className="spin"/> Submitting…</> : <>Submit request <ArrowRight/></>}</button></footer>
+            </form>
+          </>}
+        </section>
+      </div>
+    </div>
+  </main>;
 }
