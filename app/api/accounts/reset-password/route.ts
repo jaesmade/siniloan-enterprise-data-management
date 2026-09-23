@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   if (Number(request.headers.get("content-length") ?? 0) > 4_096) return Response.json({ error: "Request body is too large." }, { status: 413, headers: noStore });
 
   const token = request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
-  if (!token) return Response.json({ error: "Sign in with a DPO account to reset passwords." }, { status: 401, headers: noStore });
+  if (!token) return Response.json({ error: "Sign in with an administrator account to reset passwords." }, { status: 401, headers: noStore });
 
   let body: { userId?: unknown };
   try { body = await request.json(); } catch { return Response.json({ error: "Invalid request body." }, { status: 400, headers: noStore }); }
@@ -33,13 +33,13 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
   const { data: actor, error: actorError } = await admin.schema("core").from("profiles").select("id, role, status").eq("id", authData.user.id).maybeSingle();
-  if (actorError || !actor || actor.role !== "dpo" || actor.status !== "active") return Response.json({ error: "Only an active DPO can reset account passwords." }, { status: 403, headers: noStore });
+  if (actorError || !actor || !(actor.role === "dpo" || actor.role === "system_admin") || actor.status !== "active") return Response.json({ error: "Only an active DPO or System Administrator can reset account passwords." }, { status: 403, headers: noStore });
 
   const rateLimit = await checkRateLimit("accounts.password_reset", requestFingerprint(request, actor.id), 10, 60 * 60);
   if (!rateLimit.allowed) return Response.json({ error: "Too many password resets. Try again later." }, { status: 429, headers: { ...rateLimitHeaders(rateLimit, 10), ...noStore } });
 
   const { data: target, error: targetError } = await admin.schema("core").from("profiles").select("id, full_name, username, role, status").eq("id", userId).maybeSingle();
-  if (targetError || !target || target.status !== "active" || target.role === "dpo") return Response.json({ error: "Choose an active Staff or Data Steward account." }, { status: 404, headers: noStore });
+  if (targetError || !target || target.status !== "active" || target.role === "system_admin" || (actor.role === "dpo" && target.role === "dpo")) return Response.json({ error: "Choose an active account you are allowed to manage." }, { status: 404, headers: noStore });
 
   const generatedPassword = randomBytes(24).toString("base64url");
   const { error: passwordError } = await admin.auth.admin.updateUserById(target.id, { password: generatedPassword });

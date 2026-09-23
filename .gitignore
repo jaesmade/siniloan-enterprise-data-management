@@ -31,3 +31,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode
 *.tsbuildinfo
+
+# Local private guest request attachments
+.private-uploads/

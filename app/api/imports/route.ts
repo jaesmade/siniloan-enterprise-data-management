@@ -274,6 +274,9 @@ export async function POST(request: Request) {
   const { data: authData, error: authError } = await supabase.auth.getUser(token);
   if (authError || !authData.user) return Response.json({ error: "Your session is no longer valid. Sign in again." }, { status: 401 });
 
+  const { data: actor } = await supabase.schema("core").from("profiles").select("role,status").eq("id",authData.user.id).maybeSingle();
+  if (!actor || actor.status !== "active" || !["dpo","office_focal"].includes(actor.role)) return Response.json({error:"An active DPO or assigned Office Focalperson is required."},{status:403});
+
   const rateLimit = await checkRateLimit("data.import", requestFingerprint(request, authData.user.id), 10, 60 * 60);
   if (!rateLimit.allowed) {
     return Response.json(
@@ -318,7 +321,7 @@ export async function POST(request: Request) {
     try {
       const record = mapRow(destination, row, "00000000-0000-0000-0000-000000000000", authData.user.id, departmentId);
       const key = duplicateKey(destination, record);
-      if (key && seen.has(key)) { duplicateRows += 1; errors.push({ source_row_number: row.sourceRowNumber, error_code: "duplicate_in_file", message: "This row duplicates an earlier row in the upload." }); continue; }
+      if (key && seen.has(key)) duplicateRows += 1;
       if (key) seen.add(key);
       mappedRows.push(record);
     } catch (error) {
@@ -332,8 +335,15 @@ export async function POST(request: Request) {
     preview: mappedRows.slice(0, 12).map((record) => previewRecord(destination, record)), errors,
   }, { headers: { "Cache-Control": "no-store" } });
   if (mode !== "commit") return Response.json({ error: "Choose a valid import operation." }, { status: 400 });
-  if (duplicateImport?.status === "completed") return Response.json({ error: `This file was already imported on ${new Date(duplicateImport.created_at).toLocaleString("en-PH")}. Review its history entry instead.` }, { status: 409 });
+  // Re-imports are allowed; matching source data is retained and reported as a warning.
 
+  if (actor.role === "office_focal") {
+    const { data: submissionId, error: submissionError } = await supabase.schema("core").rpc("submit_data_submission", {
+      p_dataset_slug: config.slug, p_type: "import", p_payload: mappedRows, p_filename: file.name,
+    });
+    if (submissionError || !submissionId) return Response.json({error: submissionError?.message ?? "The import could not be submitted for review."},{status:403});
+    return Response.json({submissionId,filename:file.name,total:rows.length,accepted:0,rejected:errors.length,duplicateRows,pendingReview:true,errors:errors.slice(0,1000)},{headers:{"Cache-Control":"no-store"}});
+  }
   const { data: jobId, error: beginError } = await supabase.schema("core").rpc("begin_import", {
     dataset_slug: config.slug,
     source_filename: file.name,

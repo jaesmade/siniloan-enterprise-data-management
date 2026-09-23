@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CaretDown, IdentificationCard, X } from "@phosphor-icons/react";
+import { CaretDown, IdentificationCard, SpinnerGap, Trash, X } from "@phosphor-icons/react";
+import { createClient } from "@/lib/supabase/client";
 
 type Row = { id: string; [key: string]: unknown };
 type Database = "jobseekers" | "research" | "biometrics";
@@ -88,7 +89,10 @@ function metadataSection(key: string): string {
   return "Other form and import fields";
 }
 
-export function RecordDetailModal({ database, record, onClose, onEdit }: { database: Database; record: Row; onClose: () => void; onEdit?: () => void }) {
+export function RecordDetailModal({ database, record, onClose, onEdit, canDelete=false, onDeleted }: { database: Database; record: Row; onClose: () => void; onEdit?: () => void; canDelete?:boolean; onDeleted?:()=>void }) {
+  const [confirmDelete,setConfirmDelete]=useState(false);
+  const [deleting,setDeleting]=useState(false);
+  const [deleteError,setDeleteError]=useState("");
   const [showEmpty, setShowEmpty] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -119,6 +123,7 @@ export function RecordDetailModal({ database, record, onClose, onEdit }: { datab
   const title = database === "jobseekers" ? [record.first_name, record.middle_name, record.surname, record.suffix].filter(Boolean).join(" ") : database === "research" ? String(record.requester_name || "Research request") : String(record.person_name || "Device event");
   const status = database === "jobseekers" ? (record.metadata as Record<string, unknown> | undefined)?.["EMPLOYMENT STATUS"] : database === "research" ? record.status : record.attendance_status;
   const filledCount = [...primary, ...metadata, ...source].filter(([, value]) => !isEmpty(value)).length;
+  const deleteRecord=async()=>{setDeleting(true);setDeleteError("");const {error}=await createClient().schema("core").rpc("delete_record",{p_module:database,p_record_id:record.id});if(error){setDeleteError(error.message);setDeleting(false);return;}onDeleted?.();onClose();};
 
   return <div className="modal-backdrop record-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section ref={dialogRef} className="record-modal record-detail-modal" role="dialog" aria-modal="true" aria-labelledby="record-detail-title" aria-describedby="record-detail-description">
@@ -130,7 +135,7 @@ export function RecordDetailModal({ database, record, onClose, onEdit }: { datab
         <DetailSection title="Original source fields" entries={source} showEmpty={showEmpty} />
         <details className="record-detail-system"><summary>Record history and identifiers <CaretDown aria-hidden="true" /></summary><Fields entries={system} showEmpty={showEmpty} /></details>
       </div>
-      <footer className="record-modal-actions"><span>Full record · {names[database]}</span><div><button type="button" className="button secondary" onClick={onClose}>Close</button>{onEdit && <button type="button" className="button primary" onClick={onEdit}>Edit record</button>}</div></footer>
+      <footer className="record-modal-actions"><span>Full record · {names[database]}</span><div>{canDelete&&<button type="button" className="button danger" onClick={()=>setConfirmDelete(true)}><Trash/> Delete</button>}<button type="button" className="button secondary" onClick={onClose}>Close</button>{onEdit&&<button type="button" className="button primary" onClick={onEdit}>Edit record</button>}</div></footer>{confirmDelete&&<div className="record-delete-confirm"><p>This permanently deletes the record and records the action in the audit log.</p>{deleteError&&<p className="form-error" role="alert">{deleteError}</p>}<button className="button secondary" onClick={()=>setConfirmDelete(false)} disabled={deleting}>Cancel</button><button className="button danger-solid" onClick={()=>void deleteRecord()} disabled={deleting}>{deleting?<><SpinnerGap className="spin"/> Deleting…</>:"Delete record"}</button></div>}
     </section>
   </div>;
 }

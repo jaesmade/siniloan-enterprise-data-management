@@ -12,7 +12,8 @@
     "db:reset": "supabase db reset",
     "db:status": "supabase status",
     "db:test": "supabase test db",
-    "db:types": "supabase gen types typescript --local --schema core,jobseekers,research,biometrics > lib/database/database.generated.ts"
+    "db:types": "supabase gen types typescript --local --schema core,jobseekers,research,biometrics > lib/database/database.generated.ts",
+    "db:seed:roles": "node scripts/bootstrap-local-roles.mjs"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
