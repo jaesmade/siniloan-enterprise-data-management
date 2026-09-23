@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { PencilSimple } from '@phosphor-icons/react';
 import { AddRecordModal, type EditableRecord } from '@/components/add-record-modal';
+import { RecordDetailModal } from '@/components/record-detail-modal';
 import { createClient } from '@/lib/supabase/client';
 
 type Row = { id: string; [key: string]: unknown };
@@ -21,6 +22,7 @@ export function RecordBrowser({ database, columns, prepare, display, canEdit = f
   const [error,setError]=useState('');
   const [retry,setRetry]=useState(0);
   const [editing,setEditing]=useState<EditableRecord|null>(null);
+  const [viewing,setViewing]=useState<Row|null>(null);
   const key=JSON.stringify(filters);
   const invalid=Boolean(filters.from && filters.to && filters.from>filters.to);
   const busy=loadedKey!==key;
@@ -60,8 +62,8 @@ export function RecordBrowser({ database, columns, prepare, display, canEdit = f
       <div className="record-filter-actions"><button className="button secondary" onClick={()=>update({search:'',status:'',secondary:'',from:'',to:''})}>Clear filters</button><span>Filters search all records you can access.</span></div>
     </div>
     {invalid?<p className="empty-state" role="alert">Date to must be on or after Date from.</p>:busy?<div className="empty-state" role="status">Loading records…</div>:error?<div className="empty-state" role="alert"><p>{error}</p><button className="button secondary" onClick={()=>{setLoadedKey('');setRetry(value=>value+1);}}>Retry</button></div>:<>
-      {total===0?<div className="empty-state"><h2>No matching records</h2><p>Change or clear your filters to see more records.</p></div>:<div className="table-scroll"><table><thead><tr>{columns.map(([field,label])=><th key={field}>{label}</th>)}{canEdit&&<th>Actions</th>}</tr></thead><tbody>{prepare(database,result?.rows??[]).map(row=><tr key={row.id}>{columns.map(([field])=><td key={field}>{display(row[field])}</td>)}{canEdit&&<td>{!row.archived_at&&<button type="button" className="button secondary record-edit-button" onClick={()=>setEditing(row)} aria-label={`Edit ${database} record ${row.id}`}><PencilSimple/> Edit</button>}</td>}</tr>)}</tbody></table></div>}
+      {total===0?<div className="empty-state"><h2>No matching records</h2><p>Change or clear your filters to see more records.</p></div>:<div className="table-scroll"><table><thead><tr>{columns.map(([field,label])=><th key={field}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{prepare(database,result?.rows??[]).map(row=><tr key={row.id} className="record-data-row" onClick={()=>setViewing(row)}>{columns.map(([field],index)=><td key={field}>{index===0?<button type="button" className="record-view-link" onClick={()=>setViewing(row)} aria-label={`View full record for ${display(row[field])}`}>{display(row[field])}</button>:display(row[field])}</td>)}<td className="record-actions"><button type="button" className="button secondary record-edit-button" onClick={event=>{event.stopPropagation();setViewing(row);}} aria-label={`View ${database} record ${row.id}`}>View</button>{canEdit&&!row.archived_at&&<button type="button" className="button secondary record-edit-button" onClick={event=>{event.stopPropagation();setEditing(row);}} aria-label={`Edit ${database} record ${row.id}`}><PencilSimple/> Edit</button>}</td></tr>)}</tbody></table></div>}
       <div className="pagination"><span role="status">{total===0?'0 matching records':`Showing ${((page-1)*filters.size+1).toLocaleString()}–${Math.min(page*filters.size,total).toLocaleString()} of ${total.toLocaleString()} matching records`}</span><div><button aria-label="First page" disabled={page<=1} onClick={()=>setFilters(current=>({...current,page:1}))}>«</button><button aria-label="Previous page" disabled={page<=1} onClick={()=>setFilters(current=>({...current,page:page-1}))}>‹</button><span>Page {page} of {pages}</span><button aria-label="Next page" disabled={page>=pages} onClick={()=>setFilters(current=>({...current,page:page+1}))}>›</button><button aria-label="Last page" disabled={page>=pages} onClick={()=>setFilters(current=>({...current,page:pages}))}>»</button></div></div>
     </>}
-  </section>{editing&&<AddRecordModal database={database} record={editing} onClose={()=>setEditing(null)} onSaved={(message)=>{setEditing(null);onUpdated?.(message);setRetry(value=>value+1);}}/>}</>;
+  </section>{viewing&&<RecordDetailModal database={database} record={viewing} onClose={()=>setViewing(null)} onEdit={canEdit&&!viewing.archived_at?()=>{setEditing(viewing);setViewing(null);}:undefined}/>}{editing&&<AddRecordModal database={database} record={editing} onClose={()=>setEditing(null)} onSaved={(message)=>{setEditing(null);onUpdated?.(message);setRetry(value=>value+1);}}/>}</>;
 }

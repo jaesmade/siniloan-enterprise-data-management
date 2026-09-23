@@ -1,0 +1,136 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { CaretDown, IdentificationCard, X } from "@phosphor-icons/react";
+
+type Row = { id: string; [key: string]: unknown };
+type Database = "jobseekers" | "research" | "biometrics";
+type Entry = [string, unknown];
+
+const names: Record<Database, string> = {
+  jobseekers: "Jobseeker Registry",
+  research: "Research & Data Requests",
+  biometrics: "Biometrics Data",
+};
+const derivedJobseekerFields = new Set(["name", "employment_status", "preferred_occupation"]);
+const systemFields = new Set(["id", "department_id", "subject_id", "location_id", "import_job_id", "source_row_number", "created_by", "updated_by", "version", "archived_at", "created_at", "updated_at"]);
+const primaryOrder: Record<Database, string[]> = {
+  jobseekers: ["first_name", "middle_name", "surname", "suffix", "birth_date", "sex", "email", "mobile_number", "source_person_id"],
+  research: ["control_number", "requester_name", "institution_office", "research_title_purpose", "category", "date_received", "submitted_at", "status", "assigned_to", "decision_notes"],
+  biometrics: ["person_name", "personnel_number", "occurred_at", "attendance_status", "external_location_id", "employment_id_number", "workcode", "verify_code", "card_number"],
+};
+const sourceLabels: Record<string, string> = {
+  institution_office: "Institution / office",
+  research_title_purpose: "Research title / purpose",
+  submitted_at: "Submitted at",
+  date_received: "Date received",
+  external_location_id: "Location ID",
+  employment_id_number: "Employment ID number",
+  verify_code: "Verify code",
+  "PREFERRED CCUPATION/S": "Preferred occupation(s)",
+  "PREFERRED OCCUPATION/S": "Preferred occupation(s)",
+  "EMPLOYEMENT TYPE": "Employment type",
+  "REASON FOR UNEMPLOYEMENT": "Reason for unemployment",
+  "ARE YOU A 4P's BENEFICIARY?": "4Ps beneficiary",
+  "IF YES, PLEASE PROVIDE HOUSEHOLD ID NO.": "4Ps household ID",
+  "ARE YOU CURRENTLY ENROLLED IN SCHOOL?": "Currently enrolled in school",
+  "SPECIFY COUNTRY": "Current OFW country",
+  "HOUSE NO./ STREET VILLAGE": "House number / street / village",
+  "TIN NUMBER": "TIN number",
+  "HEIGHT (FT.)": "Height (ft.)",
+};
+
+function label(key: string) {
+  return sourceLabels[key] ?? key.replaceAll("_", " ").toLowerCase().replace(/\b[a-z]/g, letter => letter.toUpperCase()).replace(/\bId\b/g, "ID").replace(/\bOfw\b/g, "OFW");
+}
+
+function ordered(entries: Entry[], priority: string[] = []): Entry[] {
+  return [...entries].sort(([first], [second]) => {
+    const firstPosition = priority.indexOf(first);
+    const secondPosition = priority.indexOf(second);
+    if (firstPosition !== -1 || secondPosition !== -1) return (firstPosition === -1 ? Infinity : firstPosition) - (secondPosition === -1 ? Infinity : secondPosition);
+    return label(first).localeCompare(label(second));
+  });
+}
+
+function isEmpty(value: unknown): boolean {
+  return value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) || (typeof value === "object" && !Array.isArray(value) && value !== null && Object.keys(value).length === 0);
+}
+
+function valueText(value: unknown): string {
+  if (isEmpty(value)) return "Not provided";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.map(valueText).join(", ");
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function Fields({ entries, showEmpty }: { entries: Entry[]; showEmpty: boolean }) {
+  const visible = showEmpty ? entries : entries.filter(([, value]) => !isEmpty(value));
+  if (!visible.length) return <p className="record-detail-empty">No values were provided in this section.</p>;
+  return <dl className="record-detail-grid">{visible.map(([key, value]) => <div className={isEmpty(value) ? "is-empty" : ""} key={key}><dt title={key}>{label(key)}</dt><dd>{valueText(value)}</dd></div>)}</dl>;
+}
+
+function DetailSection({ title, entries, showEmpty }: { title: string; entries: Entry[]; showEmpty: boolean }) {
+  if (!entries.length) return null;
+  const filled = entries.filter(([, value]) => !isEmpty(value)).length;
+  if (!filled && !showEmpty) return null;
+  return <section className="record-detail-section"><div className="record-detail-section-heading"><h3>{title}</h3><span>{filled} {filled === 1 ? "field" : "fields"}</span></div><Fields entries={entries} showEmpty={showEmpty} /></section>;
+}
+
+function metadataSection(key: string): string {
+  const value = key.toUpperCase();
+  if (/COMPANY|POSITION|NUMBER OF MONTHS|^STATUS [1-5]$/.test(value)) return "Work experience";
+  if (/EMPLOY|OCCUPATION|LOOKING FOR WORK|4P|OFW|PREFERRED|LANGUAGE|ENROLLED|COUNTRY|DEPLOYMENT|HOUSEHOLD/.test(value)) return "Employment and preferences";
+  if (/CIVIL STATUS|RELIGION|HEIGHT|HOUSE|STREET|BARANGAY|MUNICIPALITY|PROVINCE|TIN NUMBER|DISABILITY/.test(value)) return "Address and profile";
+  if (/SCHOOL|GRADUATED|STRAND|COURSE\/PROGRAM|EDUCATIONAL/.test(value)) return "Education";
+  if (/TRAINING|ELIGIBILITY|LICENSE|CERTIFICATE|SKILLS/.test(value)) return "Training and credentials";
+  return "Other form and import fields";
+}
+
+export function RecordDetailModal({ database, record, onClose, onEdit }: { database: Database; record: Row; onClose: () => void; onEdit?: () => void }) {
+  const [showEmpty, setShowEmpty] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not(:disabled),summary,input:not(:disabled)"));
+      if (!items.length) return;
+      if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items[items.length - 1].focus(); }
+      else if (!event.shiftKey && document.activeElement === items[items.length - 1]) { event.preventDefault(); items[0].focus(); }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", keydown); previousFocus?.focus(); };
+  }, [onClose]);
+
+  const primary = ordered(Object.entries(record).filter(([key]) => !systemFields.has(key) && key !== "metadata" && key !== "raw_source" && !(database === "jobseekers" && derivedJobseekerFields.has(key))), primaryOrder[database]);
+  const metadata = record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata) ? Object.entries(record.metadata) : [];
+  const source = record.raw_source && typeof record.raw_source === "object" && !Array.isArray(record.raw_source) ? Object.entries(record.raw_source) : [];
+  const system = Object.entries(record).filter(([key]) => systemFields.has(key));
+  const metadataGroups = database === "jobseekers"
+    ? ["Address and profile", "Employment and preferences", "Education", "Training and credentials", "Work experience", "Other form and import fields"].map(title => ({ title, entries: ordered(metadata.filter(([key]) => metadataSection(key) === title)) }))
+    : [{ title: "Additional form and import fields", entries: ordered(metadata) }];
+  const title = database === "jobseekers" ? [record.first_name, record.middle_name, record.surname, record.suffix].filter(Boolean).join(" ") : database === "research" ? String(record.requester_name || "Research request") : String(record.person_name || "Device event");
+  const status = database === "jobseekers" ? (record.metadata as Record<string, unknown> | undefined)?.["EMPLOYMENT STATUS"] : database === "research" ? record.status : record.attendance_status;
+  const filledCount = [...primary, ...metadata, ...source].filter(([, value]) => !isEmpty(value)).length;
+
+  return <div className="modal-backdrop record-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <section ref={dialogRef} className="record-modal record-detail-modal" role="dialog" aria-modal="true" aria-labelledby="record-detail-title" aria-describedby="record-detail-description">
+      <header className="record-modal-header record-detail-header"><div className="record-modal-icon"><IdentificationCard weight="duotone" /></div><div><p id="record-detail-description" className="record-detail-context">{names[database]} · Record details</p><h2 id="record-detail-title">{title}</h2><div className="record-detail-header-meta"><span>{filledCount} saved {filledCount === 1 ? "field" : "fields"}</span>{!isEmpty(status) && <span className="record-detail-status">{valueText(status)}</span>}</div></div><button ref={closeRef} type="button" className="icon-button" onClick={onClose} aria-label="Close record details"><X /></button></header>
+      <div className="record-detail-body">
+        <div className="record-detail-toolbar"><p>Saved fields from this record.</p><label><input type="checkbox" checked={showEmpty} onChange={event => setShowEmpty(event.target.checked)} /> Show empty fields</label></div>
+        <DetailSection title="Record information" entries={primary} showEmpty={showEmpty} />
+        {metadataGroups.map(group => <DetailSection key={group.title} title={group.title} entries={group.entries} showEmpty={showEmpty} />)}
+        <DetailSection title="Original source fields" entries={source} showEmpty={showEmpty} />
+        <details className="record-detail-system"><summary>Record history and identifiers <CaretDown aria-hidden="true" /></summary><Fields entries={system} showEmpty={showEmpty} /></details>
+      </div>
+      <footer className="record-modal-actions"><span>Full record · {names[database]}</span><div><button type="button" className="button secondary" onClick={onClose}>Close</button>{onEdit && <button type="button" className="button primary" onClick={onEdit}>Edit record</button>}</div></footer>
+    </section>
+  </div>;
+}

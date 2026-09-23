@@ -1,4 +1,9 @@
 .agents
+.agent
+.claude
+.codex
+.gemini
+.impeccable
 .next
 node_modules
 out
