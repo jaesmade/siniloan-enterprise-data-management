@@ -69,19 +69,19 @@ try {
   }
   Write-StartupLog "Supabase is healthy."
 
-  if (Test-Http "http://127.0.0.1:3001/") {
-    Write-StartupLog "The application is already responding on port 3001."
+  if (Test-Http "http://127.0.0.1:3000/") {
+    Write-StartupLog "The application is already responding on port 3000."
     exit 0
   }
 
   $appProcess = Start-Process -FilePath $nodeCli `
-    -ArgumentList @($nextCli, "start", "-p", "3001", "-H", "0.0.0.0") `
+    -ArgumentList @($nextCli, "start", "-p", "3000", "-H", "0.0.0.0") `
     -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $appLogPath -RedirectStandardError $appErrorPath
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     Start-Sleep -Seconds 2
-    if (Test-Http "http://127.0.0.1:3001/") {
-      Write-StartupLog "Application is ready on port 3001 (PID $($appProcess.Id))."
+    if (Test-Http "http://127.0.0.1:3000/") {
+      Write-StartupLog "Application is ready on port 3000 (PID $($appProcess.Id))."
       exit 0
     }
     if ($appProcess.HasExited) { break }

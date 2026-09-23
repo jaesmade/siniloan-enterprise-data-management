@@ -80,9 +80,9 @@ try {
 const profile = query(`select role::text || ':' || status::text from core.profiles where id = '${userId}'`);
 if (profile !== "dpo:active") throw new Error("Created account, but DPO profile verification failed.");
 
-const appResponse = await fetch("http://127.0.0.1:3001/api/auth/sign-in", {
+const appResponse = await fetch("http://127.0.0.1:3000/api/auth/sign-in", {
   method: "POST",
-  headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1:3001" },
+  headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1:3000" },
   body: JSON.stringify({ username, password }),
 });
 

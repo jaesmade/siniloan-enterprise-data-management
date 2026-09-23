@@ -18,8 +18,8 @@ port = 54323
 
 [auth]
 enabled = true
-site_url = "http://192.168.1.101:3001"
-additional_redirect_urls = ["http://localhost:3001/**", "http://192.168.1.101:3001/**"]
+site_url = "http://192.168.1.101:3000"
+additional_redirect_urls = ["http://localhost:3000/**", "http://192.168.1.101:3000/**"]
 enable_signup = true
 
 [auth.email]

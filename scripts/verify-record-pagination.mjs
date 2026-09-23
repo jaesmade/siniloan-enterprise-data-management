@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { createClient } from "@supabase/supabase-js";
 
-const appUrl = process.env.TEST_APP_URL ?? "http://localhost:3001";
+const appUrl = process.env.TEST_APP_URL ?? "http://localhost:3000";
 const username = process.env.TEST_USERNAME;
 const password = process.env.TEST_PASSWORD;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

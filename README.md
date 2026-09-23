@@ -84,12 +84,12 @@ Local database migrations are applied when the Supabase stack is initialized. To
 
 ## Local network deployment on this Windows PC
 
-This PC can serve the app to other devices on its current LAN at `http://192.168.1.101:3001`. The application uses a production build and routes browser Supabase requests through the app; devices do not need direct access to the Supabase ports.
+This PC can serve the app to other devices on its current LAN at `http://192.168.1.101:3000`. The application uses a production build and routes browser Supabase requests through the app; devices do not need direct access to the Supabase ports.
 
 1. Build once after code or environment changes: `npm.cmd run build`.
 2. Start the local deployment now: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-server.ps1`.
 3. Install automatic startup for this Windows user: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-local-startup.ps1`. The task starts Docker Desktop, Supabase, and the app **after this user signs in**. It does not run before Windows sign-in. Startup and app logs are `local-server-startup.log`, `local-server-app.log`, and `local-server-app-error.log`.
-4. In an **Administrator PowerShell** window, change to this project directory first, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\enable-lan-firewall.ps1`. The `-File` path is relative to the window's current directory. This permits port 3001 from `192.168.1.0/24` and blocks direct LAN access to the local Supabase ports. Windows Firewall currently treats the Ethernet connection as Public, so other devices cannot connect until this rule is installed.
+4. In an **Administrator PowerShell** window, change to this project directory first, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\enable-lan-firewall.ps1`. The `-File` path is relative to the window's current directory. This permits port 3000 from `192.168.1.0/24` and blocks direct LAN access to the local Supabase ports. Windows Firewall currently treats the Ethernet connection as Public, so other devices cannot connect until this rule is installed.
 
 Keep the PC awake, signed in, and connected to the LAN. Reserve `192.168.1.101` for this PC in the router's DHCP settings; if its address or subnet changes, update `supabase/config.toml`, `scripts/enable-lan-firewall.ps1`, and this URL, then restart Supabase and rebuild/restart the app. To remove automatic startup, run `Unregister-ScheduledTask -TaskName 'Siniloan Enterprise Data Management' -Confirm:$false`.
 
