@@ -10,7 +10,7 @@ web
 
 Municipal personnel use the system to work with assigned operational datasets. The current implementation recognizes Data Privacy Officers (DPOs), Data Stewards, and Staff.
 
-A future build will replace the current roles with this hierarchy: System Admin > Data Admin > Office Focal > Office Representative > Staff. Each planned role's specific permissions remain undecided.
+A future build will replace the current roles with this hierarchy: System Admin > Data Admin > Office Focal > Staff. Each planned role's specific permissions remain undecided.
 
 ## Product Purpose
 

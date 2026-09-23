@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Archive, ArrowLeft, ArrowRight, Bell,
+  Archive, ArrowLeft, ArrowRight, Bell, CaretDown, UserCircle,
   Check, CheckCircle, Clock, Database, DownloadSimple, Eye,
   EyeSlash, FileArrowUp, Fingerprint, Funnel, Gauge, House, IdentificationCard, Pulse,
   List, Lock, MagnifyingGlass, MapPin, PencilSimple, Plus, ShieldCheck, SignOut,
@@ -16,6 +16,8 @@ import {
 } from "recharts";
 import { RecordBrowser } from "./record-browser";
 import { AddRecordModal } from "./add-record-modal";
+import { AccountPasswordReset } from "./account-password-reset";
+import { ProfileManager } from "./profile-manager";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 
 type Screen = "login" | "register" | "pending" | "admin" | "databases" | "database" | "accountManagement" | "activity" | "import";
@@ -23,7 +25,7 @@ type AccountTab = "approvals" | "users";
 type Role = "DPO" | "Data Steward" | "Staff";
 type DatabaseKey = "jobseekers" | "research" | "biometrics";
 type AccessLevel = "none" | "read" | "write";
-type HeaderNotification = { id: string; action: string; summary: string; occurred_at: string; outcome: string };
+type HeaderNotification = { id: number; action: string; summary: string; occurred_at: string; outcome: string; dataset_id: string | null };
 
 const databaseMeta: Record<DatabaseKey, { name: string; short: string; count: string; change: string; updated: string; color: string }> = {
   jobseekers: { name: "Jobseeker Registry", short: "JS", count: "1,592", change: "+4.8%", updated: "8 min ago", color: "#1e5aa8" },
@@ -164,33 +166,92 @@ const navItems: { screen: Screen; label: string; icon: typeof House; roles?: Rol
   { screen: "import", label: "Imports", icon: FileArrowUp },
 ];
 
-function AppShell({ screen, setScreen, openApprovals, profile, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut }: { screen: Screen; setScreen: (s: Screen) => void; openApprovals: () => void; profile: AuthProfile; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => Promise<void> }) {
+
+function AppShell({ screen, setScreen, openApprovals, profile, role, selectedDatabase, openDatabase, pendingApprovalCount, children, onSignOut, passwordRecovery, onRecoveryComplete }: { screen: Screen; setScreen: (s: Screen) => void; openApprovals: () => void; profile: AuthProfile; role: Role; selectedDatabase: DatabaseKey; openDatabase: (key: DatabaseKey) => void; pendingApprovalCount: number; children: React.ReactNode; onSignOut: () => Promise<void>; passwordRecovery: boolean; onRecoveryComplete: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState<HeaderNotification[]>([]);
+  const [datasetRoutes, setDatasetRoutes] = useState<Record<string, DatabaseKey>>({});
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationError, setNotificationError] = useState("");
-  const [lastReadAt, setLastReadAt] = useState(()=>typeof window==="undefined"?"":window.localStorage.getItem(`notifications-read-${profile.id}`)??"");
-  const unreadCount=notifications.filter(item=>!lastReadAt||new Date(item.occurred_at)>new Date(lastReadAt)).length+(role==="DPO"?pendingApprovalCount:0);
-  const markAllRead=()=>{const readAt=new Date().toISOString();setLastReadAt(readAt);window.localStorage.setItem(`notifications-read-${profile.id}`,readAt);};
-  useEffect(()=>{
-    let active=true;
-    const load=async()=>{const {data,error}=await createSupabaseClient().schema("core").from("audit_events").select("id, action, summary, occurred_at, outcome").order("occurred_at",{ascending:false}).limit(8);if(!active)return;if(error){setNotificationError("Notifications could not be loaded.");}else{setNotifications((data??[]) as HeaderNotification[]);setNotificationError("");}setNotificationsLoading(false);};
-    load();const timer=window.setInterval(load,30_000);return()=>{active=false;window.clearInterval(timer);};
-  },[]);
+  const [lastReadAt, setLastReadAt] = useState(() => typeof window === "undefined" ? "" : window.localStorage.getItem("notifications-read-" + profile.id) ?? "");
+  const unreadCount = notifications.filter(item => !lastReadAt || new Date(item.occurred_at) > new Date(lastReadAt)).length + (role === "DPO" ? pendingApprovalCount : 0);
+  const markAllRead = () => {
+    const readAt = new Date().toISOString();
+    setLastReadAt(readAt);
+    window.localStorage.setItem("notifications-read-" + profile.id, readAt);
+  };
+
   useEffect(() => {
-    if (!confirmSignOut&&!notificationOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") {if(!signingOut)setConfirmSignOut(false);setNotificationOpen(false);} };
+    let active = true;
+    const load = async () => {
+      const supabase = createSupabaseClient();
+      const [eventResult, datasetResult] = await Promise.all([
+        supabase.schema("core").from("audit_events").select("id, action, summary, occurred_at, outcome, dataset_id").order("occurred_at", { ascending: false }).limit(8),
+        supabase.schema("core").from("datasets").select("id, slug"),
+      ]);
+      if (!active) return;
+      if (eventResult.error) setNotificationError("Notifications could not be loaded.");
+      else {
+        setNotifications((eventResult.data ?? []) as HeaderNotification[]);
+        const routes: Record<string, DatabaseKey> = {};
+        (datasetResult.data ?? []).forEach((dataset: { id: string; slug: string }) => {
+          if (dataset.slug === "jobseeker_registry") routes[dataset.id] = "jobseekers";
+          if (dataset.slug === "research_requests") routes[dataset.id] = "research";
+          if (dataset.slug === "biometric_events") routes[dataset.id] = "biometrics";
+        });
+        setDatasetRoutes(routes);
+        setNotificationError("");
+      }
+      setNotificationsLoading(false);
+    };
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  const profileIsOpen = profileOpen || passwordRecovery;
+
+  useEffect(() => {
+    if (!confirmSignOut && !notificationOpen && !profileMenuOpen && !profileIsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (!signingOut) setConfirmSignOut(false);
+      setNotificationOpen(false);
+      setProfileMenuOpen(false);
+      if (profileIsOpen) {
+        setProfileOpen(false);
+        if (passwordRecovery) onRecoveryComplete();
+      }
+    };
     document.addEventListener("keydown", closeOnEscape);
-    if(confirmSignOut)document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", closeOnEscape); if(confirmSignOut)document.body.style.overflow = ""; };
-  }, [confirmSignOut, notificationOpen, signingOut]);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [confirmSignOut, notificationOpen, profileMenuOpen, profileIsOpen, passwordRecovery, signingOut, onRecoveryComplete]);
+
+  useEffect(() => {
+    if (!confirmSignOut && !profileIsOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [confirmSignOut, profileIsOpen]);
+
   const completeSignOut = async () => { setSigningOut(true); try { await onSignOut(); } finally { setSigningOut(false); setConfirmSignOut(false); } };
+  const openNotification = (item: HeaderNotification) => {
+    markAllRead();
+    setNotificationOpen(false);
+    if (item.action === "auth.login") { setScreen("activity"); return; }
+    const database = item.dataset_id ? datasetRoutes[item.dataset_id] : undefined;
+    if (database) openDatabase(database);
+    else setScreen("activity");
+  };
+
   return <div className="app-shell">
     <a href="#main-content" className="skip-link">Skip to main content</a>
-    <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+    <aside className={"sidebar " + (mobileOpen ? "open" : "")}>
       <div className="sidebar-brand"><Seal /><div><strong>Siniloan EDM</strong><span>Enterprise Data Management</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X /></button></div>
       <nav aria-label="Main navigation">
         <div className="nav-label">Workspace</div>
@@ -198,15 +259,48 @@ function AppShell({ screen, setScreen, openApprovals, profile, role, selectedDat
         <div className="nav-label">Databases</div>
         {(Object.keys(databaseMeta) as DatabaseKey[]).map(key => <button key={key} className={screen === "database" && selectedDatabase === key ? "subtle-active database-active" : ""} onClick={() => { openDatabase(key); setMobileOpen(false); }}><span className="db-dot" style={{ background: databaseMeta[key].color }} /> <span>{databaseMeta[key].name}</span></button>)}
       </nav>
-      <div className="sidebar-footer"><div className="role-switch"><label>Account role<span className="current-role">{role}</span></label></div><button className="sidebar-notification" aria-expanded={notificationOpen} aria-controls="notification-panel" onClick={()=>setNotificationOpen(current=>!current)}><span className="notification-icon"><Bell/>{unreadCount>0&&<em>{Math.min(unreadCount,99)}</em>}</span><span><strong>Notifications</strong><small>{unreadCount?`${unreadCount} unread`:"You’re all caught up"}</small></span></button></div>
     </aside>
     {mobileOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
-    <div className="app-main"><header className="topbar"><button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button><div className="top-actions"><div className="top-account"><span className="avatar">{accountInitials(profile.full_name)}</span><span><strong>{profile.full_name}</strong><small>{role}</small></span></div><button aria-label="Sign out" title="Sign out" className="icon-button" onClick={()=>setConfirmSignOut(true)}><SignOut/></button></div></header><main id="main-content">{children}</main></div>
-    {notificationOpen&&<><button className="notification-backdrop" aria-label="Close notifications" onClick={()=>setNotificationOpen(false)}/><aside className="notification-panel" id="notification-panel" aria-label="Notifications"><header><div><h2>Notifications</h2><p>Recent activity requiring your attention</p></div>{unreadCount>0&&<button onClick={markAllRead}>Mark all read</button>}</header><div className="notification-list">{role==="DPO"&&pendingApprovalCount>0&&<button className="notification-item unread" onClick={()=>{markAllRead();setNotificationOpen(false);openApprovals()}}><span className="activity-icon amber"><UserPlus/></span><span><strong>{pendingApprovalCount} account {pendingApprovalCount===1?"request":"requests"} waiting</strong><small>Review and assign database access</small></span></button>}{notificationsLoading?<div className="notification-empty"><SpinnerGap className="spin"/><span>Loading notifications…</span></div>:notificationError?<div className="notification-empty"><WarningCircle/><span>{notificationError}</span></div>:notifications.length===0&&pendingApprovalCount===0?<div className="notification-empty"><CheckCircle/><span>No new notifications.</span></div>:notifications.map(item=>{const unread=!lastReadAt||new Date(item.occurred_at)>new Date(lastReadAt);return <button className={`notification-item ${unread?"unread":""}`} key={item.id} onClick={()=>{markAllRead();setNotificationOpen(false);if(role!=="Staff")setScreen("activity")}}><span className={`activity-icon ${item.outcome==="failure"?"red":"blue"}`}>{item.outcome==="failure"?<WarningCircle/>:<Pulse/>}</span><span><strong>{item.summary}</strong><small>{item.action.replaceAll("."," · ")} · {new Date(item.occurred_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})}</small></span></button>})}</div>{role!=="Staff"&&<footer><button onClick={()=>{markAllRead();setNotificationOpen(false);setScreen("activity")}}>View all system activity <ArrowRight/></button></footer>}</aside></>}
-    {confirmSignOut&&<div className="modal-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget&&!signingOut)setConfirmSignOut(false)}}><section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-description"><div className="confirmation-icon"><SignOut weight="duotone"/></div><h2 id="signout-title">Sign out of the system?</h2><p id="signout-description">Your secure session will end. You will need to enter your username and password to access municipal data again.</p><div className="confirmation-actions"><button className="button secondary" autoFocus onClick={()=>setConfirmSignOut(false)} disabled={signingOut}>Cancel</button><button className="button danger-solid" onClick={completeSignOut} disabled={signingOut}>{signingOut?<><SpinnerGap className="spin"/> Signing out…</>:<><SignOut/> Sign out</>}</button></div></section></div>}
+    <div className="app-main">
+      <header className="topbar">
+        <button className="menu-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><List /></button>
+        <div className="top-actions">
+          <button className="icon-button notification-trigger" aria-label={unreadCount ? "Notifications, " + unreadCount + " unread" : "Notifications"} aria-expanded={notificationOpen} aria-controls="notification-panel" onClick={() => { setNotificationOpen(current => !current); setProfileMenuOpen(false); }}>
+            <Bell />{unreadCount > 0 && <span className="notification-trigger-count">{Math.min(unreadCount, 99)}</span>}
+          </button>
+          <div className="profile-menu-root">
+            <button className="profile-trigger" aria-expanded={profileMenuOpen} onClick={() => { setProfileMenuOpen(current => !current); setNotificationOpen(false); }}>
+              <span className="avatar">{accountInitials(profile.full_name)}</span>
+              <span className="top-account-copy"><strong>{profile.full_name}</strong><small>{role}</small></span>
+              <CaretDown />
+            </button>
+            {profileMenuOpen && <><button className="profile-menu-backdrop" aria-label="Close profile menu" onClick={() => setProfileMenuOpen(false)} /><div className="profile-menu">
+              <div className="profile-menu-heading"><strong>{profile.full_name}</strong><small>{profile.email}</small></div>
+              <button onClick={() => { setProfileMenuOpen(false); setProfileOpen(true); }}><UserCircle /> Profile</button>
+              <button onClick={() => { setProfileMenuOpen(false); setConfirmSignOut(true); }}><SignOut /> Sign out</button>
+            </div></>}
+          </div>
+        </div>
+      </header>
+      <main id="main-content">{children}</main>
+    </div>
+    {notificationOpen && <><button className="notification-backdrop" aria-label="Close notifications" onClick={() => setNotificationOpen(false)} /><aside className="notification-panel" id="notification-panel" aria-label="Notifications">
+      <header><div><h2>Notifications</h2><p>Recent account and data activity</p></div>{unreadCount > 0 && <button onClick={markAllRead}>Mark all read</button>}</header>
+      <div className="notification-list">
+        {role === "DPO" && pendingApprovalCount > 0 && <button className="notification-item unread" onClick={() => { markAllRead(); setNotificationOpen(false); openApprovals(); }}><span className="activity-icon amber"><UserPlus /></span><span><strong>{pendingApprovalCount} account {pendingApprovalCount === 1 ? "request" : "requests"} waiting</strong><small>Review and assign database access</small></span></button>}
+        {notificationsLoading ? <div className="notification-empty"><SpinnerGap className="spin" /><span>Loading notifications…</span></div> : notificationError ? <div className="notification-empty"><WarningCircle /><span>{notificationError}</span></div> : notifications.length === 0 && pendingApprovalCount === 0 ? <div className="notification-empty"><CheckCircle /><span>No new notifications.</span></div> : notifications.map(item => {
+          const unread = !lastReadAt || new Date(item.occurred_at) > new Date(lastReadAt);
+          const timestamp = new Date(item.occurred_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
+          const detail = item.action.replaceAll(".", " · ") + " · " + timestamp;
+          return <button className={"notification-item " + (unread ? "unread" : "")} key={item.id} onClick={() => openNotification(item)}><span className={"activity-icon " + (item.outcome === "failure" ? "red" : item.action === "auth.login" ? "purple" : "blue")}>{item.outcome === "failure" ? <WarningCircle /> : item.action === "auth.login" ? <ShieldCheck /> : <Pulse />}</span><span><strong>{item.summary}</strong><small>{detail}</small></span></button>;
+        })}
+      </div>
+      {role !== "Staff" && <footer><button onClick={() => { markAllRead(); setNotificationOpen(false); setScreen("activity"); }}>View all system activity <ArrowRight /></button></footer>}
+    </aside></>}
+    {(profileOpen || passwordRecovery) && <ProfileManager profile={{ ...profile, role }} passwordRecovery={passwordRecovery} onClose={() => { setProfileOpen(false); if (passwordRecovery) onRecoveryComplete(); }} onRecoveryComplete={() => { setProfileOpen(true); onRecoveryComplete(); }} />}
+    {confirmSignOut && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !signingOut) setConfirmSignOut(false); }}><section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-description"><div className="confirmation-icon"><SignOut weight="duotone" /></div><h2 id="signout-title">Sign out of the system?</h2><p id="signout-description">Your secure session will end. You will need to enter your username and password to access municipal data again.</p><div className="confirmation-actions"><button className="button secondary" autoFocus onClick={() => setConfirmSignOut(false)} disabled={signingOut}>Cancel</button><button className="button danger-solid" onClick={completeSignOut} disabled={signingOut}>{signingOut ? <><SpinnerGap className="spin" /> Signing out…</> : <><SignOut /> Sign out</>}</button></div></section></div>}
   </div>;
 }
-
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description: string; actions?: React.ReactNode }) {
   return <><div className="page-header"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1><p>{description}</p></div>{actions && <div className="header-actions">{actions}</div>}</div>{eyebrow==="Master dashboard"&&<SystemHealth/>}</>;
 }
@@ -368,7 +462,7 @@ function AccessManagement() {
   return <div className="account-management-section">
     {notice&&<div className="toast" role="status"><CheckCircle weight="fill" /> {notice}</div>}{error&&<p className="form-error" role="alert">{error}</p>}
     {loading?<section className="panel empty-state"><SpinnerGap className="spin"/><h2>Loading active accounts</h2><p>Reading current roles and database grants.</p></section>:<div className="access-layout"><section className="panel user-list-panel"><div className="table-search"><MagnifyingGlass /><input value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search accounts" /></div><div className="user-list">{filtered.length===0?<div className="empty-state"><Users/><h2>No accounts found</h2><p>Try another name or username.</p></div>:filtered.map((account)=><button key={account.id} className={account.id===selectedId?"active":""} onClick={()=>choose(account)}><span className="avatar">{initials(account.full_name)}</span><div><strong>{account.full_name}</strong><span>{departments.find((department)=>department.id===account.department_id)?.name??"No department"}</span></div><Badge tone={account.role==="data_steward"?"purple":"neutral"}>{roleName(account.role)}</Badge></button>)}</div></section>
-      {selected?<section className="panel access-editor"><div className="access-person"><div className="avatar large">{initials(selected.full_name)}</div><div><h2>{selected.full_name}</h2><p>{selected.email}</p><span>@{selected.username} · Active account</span></div><Badge tone="green">Active</Badge></div><div className="form-grid"><label>Department<select value={departmentId} onChange={(event)=>setDepartmentId(event.target.value)}><option value="">Select department</option>{departments.map((department)=><option key={department.id} value={department.id}>{department.name}</option>)}</select></label><label>Account role<select value={accountRole} onChange={(event)=>setAccountRole(event.target.value as "staff"|"data_steward")}><option value="staff">Staff</option><option value="data_steward">Data Steward</option></select></label></div><div className="permission-heading"><div><h3>Database permissions</h3><p>Choose the highest level this account can use for each database.</p></div><Badge tone="blue"><Lock /> DPO managed</Badge></div><div className="permission-table"><div className="permission-row heading"><span>Database</span><span>No access</span><span>Read only</span><span>Read/write</span></div>{(Object.keys(databaseMeta) as DatabaseKey[]).map((key,i)=><div className="permission-row" key={key}><div><span className="db-initial" style={{background:databaseMeta[key].color}}>{databaseMeta[key].short}</span><div><strong>{databaseMeta[key].name}</strong><small>{i===0?"Profiles and qualifications":i===1?"Requests and releases":"Device records and events"}</small></div></div>{(["none","read","write"] as AccessLevel[]).map((level)=><label key={level}><input type="radio" name={`access-${key}`} checked={levels[key]===level} onChange={()=>setLevels((current)=>({...current,[key]:level}))}/><span className="radio-visual"><Check /></span></label>)}</div>)}</div><div className="access-callout"><ShieldCheck /><div><strong>Permission changes take effect immediately</strong><p>Future database queries and imports will use the saved access levels.</p></div></div><div className="editor-actions"><button className="button secondary" onClick={cancel} disabled={saving}>Cancel changes</button><button className="button primary" onClick={save} disabled={saving}>{saving?<><SpinnerGap className="spin"/> Saving…</>:<><Check /> Save access</>}</button></div></section>:<section className="panel access-editor empty-state"><Users/><h2>No active account selected</h2><p>Approved Staff and Data Steward accounts will appear here.</p></section>}</div>}<DepartmentManagement />
+      {selected?<section className="panel access-editor"><div className="access-person"><div className="avatar large">{initials(selected.full_name)}</div><div><h2>{selected.full_name}</h2><p>{selected.email}</p><span>@{selected.username} · Active account</span></div><Badge tone="green">Active</Badge></div><AccountPasswordReset key={selected.id} userId={selected.id} fullName={selected.full_name} /><div className="form-grid"><label>Department<select value={departmentId} onChange={(event)=>setDepartmentId(event.target.value)}><option value="">Select department</option>{departments.map((department)=><option key={department.id} value={department.id}>{department.name}</option>)}</select></label><label>Account role<select value={accountRole} onChange={(event)=>setAccountRole(event.target.value as "staff"|"data_steward")}><option value="staff">Staff</option><option value="data_steward">Data Steward</option></select></label></div><div className="permission-heading"><div><h3>Database permissions</h3><p>Choose the highest level this account can use for each database.</p></div><Badge tone="blue"><Lock /> DPO managed</Badge></div><div className="permission-table"><div className="permission-row heading"><span>Database</span><span>No access</span><span>Read only</span><span>Read/write</span></div>{(Object.keys(databaseMeta) as DatabaseKey[]).map((key,i)=><div className="permission-row" key={key}><div><span className="db-initial" style={{background:databaseMeta[key].color}}>{databaseMeta[key].short}</span><div><strong>{databaseMeta[key].name}</strong><small>{i===0?"Profiles and qualifications":i===1?"Requests and releases":"Device records and events"}</small></div></div>{(["none","read","write"] as AccessLevel[]).map((level)=><label key={level}><input type="radio" name={`access-${key}`} checked={levels[key]===level} onChange={()=>setLevels((current)=>({...current,[key]:level}))}/><span className="radio-visual"><Check /></span></label>)}</div>)}</div><div className="access-callout"><ShieldCheck /><div><strong>Permission changes take effect immediately</strong><p>Future database queries and imports will use the saved access levels.</p></div></div><div className="editor-actions"><button className="button secondary" onClick={cancel} disabled={saving}>Cancel changes</button><button className="button primary" onClick={save} disabled={saving}>{saving?<><SpinnerGap className="spin"/> Saving…</>:<><Check /> Save access</>}</button></div></section>:<section className="panel access-editor empty-state"><Users/><h2>No active account selected</h2><p>Approved Staff and Data Steward accounts will appear here.</p></section>}</div>}<DepartmentManagement />
   </div>;
 }
 
@@ -588,13 +682,29 @@ export function EnterpriseDataApp() {
   const [accountTab, setAccountTab] = useState<AccountTab>("approvals");
   const [selectedDatabase, setSelectedDatabase] = useState<DatabaseKey>("jobseekers");
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const openDatabase = (key: DatabaseKey) => { setSelectedDatabase(key); setScreen("database"); };
   const importDatabase = (key: DatabaseKey) => { setSelectedDatabase(key); setScreen("import"); };
   const openApprovals = () => { setAccountTab("approvals"); setScreen("accountManagement"); };
   const activateProfile = (nextProfile: AuthProfile) => { setProfile(nextProfile); setRole(roleLabel(nextProfile.role)); setScreen(nextProfile.status !== "active" ? "pending" : nextProfile.role === "staff" ? "databases" : "admin"); };
-  useEffect(() => { let active = true; const fallbackTimer = window.setTimeout(() => { if (active) setBooting(false); }, 8_000); createSupabaseClient().auth.getSession().then(async ({ data }: { data: { session: { user: { id: string } } | null } }) => { if (!data.session) return; const { data: nextProfile } = await createSupabaseClient().schema("core").from("profiles").select("id, full_name, username, email, role, status").eq("id", data.session.user.id).maybeSingle(); if (active && nextProfile) activateProfile(nextProfile as AuthProfile); }).catch(() => undefined).finally(() => { window.clearTimeout(fallbackTimer); if (active) setBooting(false); }); return () => { active = false; window.clearTimeout(fallbackTimer); }; }, []);
-  useEffect(() => { if (profile?.role !== "dpo" || profile.status !== "active") return; let active = true; const refreshCount = () => createSupabaseClient().schema("core").from("profiles").select("id", { count: "exact", head: true }).eq("status", "pending").then(({ count }: { count: number | null }) => { if (active) setPendingApprovalCount(count ?? 0); }); refreshCount(); const timer = window.setInterval(refreshCount, 30_000); return () => { active = false; window.clearInterval(timer); }; }, [profile?.role, profile?.status]);
-  const signOut = async () => { await createSupabaseClient().auth.signOut(); setProfile(null); setRole("Staff"); setPendingApprovalCount(0); setScreen("login"); };
+  useEffect(() => {
+    let active = true;
+    const supabase = createSupabaseClient();
+    const fallbackTimer = window.setTimeout(() => { if (active) setBooting(false); }, 8_000);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event: string) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+    });
+    supabase.auth.getSession().then(async ({ data }: { data: { session: { user: { id: string } } | null } }) => {
+      if (!data.session) return;
+      const { data: nextProfile } = await supabase.schema("core").from("profiles").select("id, full_name, username, email, role, status").eq("id", data.session.user.id).maybeSingle();
+      if (active && nextProfile) activateProfile(nextProfile as AuthProfile);
+    }).catch(() => undefined).finally(() => {
+      window.clearTimeout(fallbackTimer);
+      if (active) setBooting(false);
+    });
+    return () => { active = false; window.clearTimeout(fallbackTimer); subscription.unsubscribe(); };
+  }, []);  useEffect(() => { if (profile?.role !== "dpo" || profile.status !== "active") return; let active = true; const refreshCount = () => createSupabaseClient().schema("core").from("profiles").select("id", { count: "exact", head: true }).eq("status", "pending").then(({ count }: { count: number | null }) => { if (active) setPendingApprovalCount(count ?? 0); }); refreshCount(); const timer = window.setInterval(refreshCount, 30_000); return () => { active = false; window.clearInterval(timer); }; }, [profile?.role, profile?.status]);
+  const signOut = async () => { await createSupabaseClient().auth.signOut(); setProfile(null); setRole("Staff"); setPendingApprovalCount(0); setPasswordRecovery(false); setScreen("login"); };
   if (booting) return <AuthShell><div className="status-card"><SpinnerGap className="spin" /><h2>Checking your secure session</h2><p>Loading your approved account and permissions.</p></div></AuthShell>;
   if (screen === "login") return <Login navigate={setScreen} onAuthenticated={activateProfile} />;
   if (screen === "register") return <Register navigate={setScreen} />;
@@ -609,5 +719,5 @@ export function EnterpriseDataApp() {
     case "import": content=<ImportFlow key={selectedDatabase} initialModule={selectedDatabase}/>; break;
     default: content=profile ? <LiveAdminDashboard profile={profile} openDatabase={openDatabase}/> : null;
   }
-  return <AppShell screen={screen} setScreen={setScreen} openApprovals={openApprovals} profile={profile!} role={role} selectedDatabase={selectedDatabase} openDatabase={openDatabase} pendingApprovalCount={pendingApprovalCount} onSignOut={signOut}>{content}</AppShell>;
+  return <AppShell screen={screen} setScreen={setScreen} openApprovals={openApprovals} profile={profile!} role={role} selectedDatabase={selectedDatabase} openDatabase={openDatabase} pendingApprovalCount={pendingApprovalCount} onSignOut={signOut} passwordRecovery={passwordRecovery} onRecoveryComplete={() => setPasswordRecovery(false)}>{content}</AppShell>;
 }
