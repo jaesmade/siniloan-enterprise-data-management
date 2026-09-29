@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       const { error: attachmentError } = await admin.schema("research").from("request_attachments").insert({ request_id: row.id, attachment_type: item.kind, storage_path: storagePath, content_type: item.file.type, byte_size: item.file.size });
       if (attachmentError) throw attachmentError;
     }
-    await admin.schema("core").from("audit_events").insert({ dataset_id: (await admin.schema("core").from("datasets").select("id").eq("slug","research_requests").single()).data?.id, action: "request.guest_submitted", target_type: "research_request", target_id: row.id, summary: "A guest submitted a data request", metadata: { request_type: requestType, control_number: row.control_number } });
+    await admin.schema("core").from("audit_events").insert({ dataset_id: (await admin.schema("core").from("datasets").select("id").eq("slug","research_requests").single()).data?.id, action: "request.guest_submitted", target_type: "research_request", target_id: row.id, summary: requestType === "interview_request" ? "A guest submitted an interview request" : "A guest submitted a data request", metadata: { request_type: requestType, control_number: row.control_number } });
     return Response.json({ control_number: row.control_number }, { headers: { "Cache-Control": "no-store", "X-RateLimit-Remaining": String(rate.remaining) } });
   } catch {
     if (created) await admin.schema("research").from("requests").delete().eq("id", id);

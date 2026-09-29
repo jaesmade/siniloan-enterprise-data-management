@@ -1,8 +1,7 @@
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 
-import ExcelJS from "exceljs";
-import * as XLSX from "@e965/xlsx";
+import type { CellValue } from "exceljs";
 import { createClient } from "@supabase/supabase-js";
 
 import { getPublicSupabaseEnv } from "@/lib/supabase/env";
@@ -33,11 +32,11 @@ function cleanHeader(value: unknown) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
-function cellValue(value: ExcelJS.CellValue): unknown {
+function cellValue(value: CellValue): unknown {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return value;
   if (typeof value !== "object") return value;
-  if ("result" in value) return cellValue(value.result as ExcelJS.CellValue);
+  if ("result" in value) return cellValue(value.result as CellValue);
   if ("text" in value) return value.text;
   if ("richText" in value) return value.richText.map((part) => part.text).join("");
   return String(value);
@@ -71,12 +70,12 @@ function isoDateTime(value: unknown, dayFirst = false) {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
-async function readRows(file: File, destination: ModuleKey): Promise<SourceRow[]> {
-  const buffer = Buffer.from(await file.arrayBuffer());
+async function readRows(file: File, destination: ModuleKey, buffer: Buffer): Promise<SourceRow[]> {
   const extension = file.name.split(".").pop()?.toLowerCase();
 
   if (extension === "xls") {
     if (destination !== "biometrics") throw new Error("Legacy XLS files are supported for Biometrics imports only.");
+    const XLSX = await import("@e965/xlsx");
     const legacyWorkbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
     const sheetName = legacyWorkbook.SheetNames[0];
     const worksheet = sheetName ? legacyWorkbook.Sheets[sheetName] : undefined;
@@ -96,6 +95,7 @@ async function readRows(file: File, destination: ModuleKey): Promise<SourceRow[]
     });
   }
 
+  const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
 
   if (extension === "csv") {
@@ -171,11 +171,14 @@ function mapRow(
   if (module === "research") {
     const requesterName = meaningful(sourceValue(row, "RESEARCHER/ REQUESTER NAME (First Name M.I Surname)", "REQUESTER NAME"));
     const purpose = meaningful(sourceValue(row, "RESEARCH TITLE/ PURPOSE", "RESEARCH TITLE", "PURPOSE"));
+    const category = meaningful(sourceValue(row, "CATEGORY"));
+    const requestType = category?.trim().toLowerCase() === "interview request" ? "interview_request" : "data_request";
     if (!requesterName || !purpose) throw new Error("Requester name and research title or purpose are required.");
     return {
       department_id: departmentId,
       submitted_at: isoDateTime(sourceValue(row, "TIMESTAMP")),
-      category: meaningful(sourceValue(row, "CATEGORY")),
+      category,
+      request_type: requestType,
       requester_name: requesterName,
       institution_office: meaningful(sourceValue(row, "SCHOOL/ INSTITUTION/ OFFICE", "INSTITUTION/OFFICE")),
       research_title_purpose: purpose,
@@ -219,7 +222,7 @@ function duplicateKey(module: ModuleKey, record: Record<string, unknown>) {
 
 function previewRecord(module: ModuleKey, record: Record<string, unknown>) {
   if (module === "jobseekers") return { name: [record.first_name, record.middle_name, record.surname].filter(Boolean).join(" "), birth_date: record.birth_date ?? "—", contact: record.mobile_number ?? "—" };
-  if (module === "research") return { requester: record.requester_name ?? "—", control_number: record.control_number ?? "—", purpose: record.research_title_purpose ?? "—" };
+  if (module === "research") return { requester: record.requester_name ?? "—", request_type: record.request_type ?? "—", control_number: record.control_number ?? "—", purpose: record.research_title_purpose ?? "—" };
   return { name: record.person_name ?? "—", personnel_number: record.personnel_number ?? "—", occurred_at: record.occurred_at ?? "—" };
 }
 
@@ -264,7 +267,6 @@ export async function POST(request: Request) {
   if (!(destination in DATASETS)) return Response.json({ error: "Choose a valid destination database." }, { status: 400 });
   if (!(file instanceof File)) return Response.json({ error: "Choose a file to import." }, { status: 400 });
   if (file.size > MAX_FILE_SIZE) return Response.json({ error: "The file exceeds the 25 MB limit." }, { status: 413 });
-  const checksum = createHash("sha256").update(Buffer.from(await file.arrayBuffer())).digest("hex");
 
   const { url, publishableKey } = getPublicSupabaseEnv();
   const supabase = createClient(url, publishableKey, {
@@ -285,9 +287,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const checksum = createHash("sha256").update(buffer).digest("hex");
   let rows: SourceRow[];
   try {
-    rows = await readRows(file, destination);
+    rows = await readRows(file, destination, buffer);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "The file could not be read." }, { status: 400 });
   }

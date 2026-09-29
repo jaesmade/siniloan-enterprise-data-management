@@ -13,6 +13,7 @@ const transportPolicy = process.env.NODE_ENV === "production" && !localSupabase 
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: { optimizePackageImports: ["@phosphor-icons/react"] },
   allowedDevOrigins: ["192.168.68.105", "192.168.1.101"],
   poweredByHeader: false,
   async rewrites() {

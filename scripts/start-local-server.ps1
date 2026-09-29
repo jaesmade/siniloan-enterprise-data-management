@@ -24,6 +24,15 @@ function Test-Http([string] $url) {
   }
 }
 
+function Test-DockerReady {
+  try {
+    & $dockerCli info --format '{{.ServerVersion}}' 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+  } catch {
+    return $false
+  }
+}
+
 try {
   if (-not (Test-Path -LiteralPath $supabaseCli) -or -not (Test-Path -LiteralPath $nextCli)) {
     throw "Project dependencies are missing. Run npm.cmd ci in $projectRoot."
@@ -39,8 +48,7 @@ try {
   if (-not (Test-Path -LiteralPath $dockerCli)) {
     throw "Docker Desktop CLI was not found at $dockerCli."
   }
-  & $dockerCli info --format '{{.ServerVersion}}' *> $null
-  if ($LASTEXITCODE -ne 0) {
+  if (-not (Test-DockerReady)) {
     if (-not (Test-Path -LiteralPath $dockerDesktop)) {
       throw "Docker Desktop was not found at $dockerDesktop."
     }
@@ -48,8 +56,7 @@ try {
     $dockerReady = $false
     for ($attempt = 0; $attempt -lt 90; $attempt++) {
       Start-Sleep -Seconds 3
-      & $dockerCli info --format '{{.ServerVersion}}' *> $null
-      if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break }
+      if (Test-DockerReady) { $dockerReady = $true; break }
     }
     if (-not $dockerReady) { throw "Docker Desktop did not become ready within 270 seconds." }
   }
